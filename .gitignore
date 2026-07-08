@@ -1,0 +1,15 @@
+data/*.db
+data/output.json
+data/proxies.txt
+data/debug_html/
+logs/*.log
+config.yaml
+.env
+__pycache__/
+*.pyc
+.venv/
+data
+logs
+mocks
+pry_general_2020_csv
+pry_general_2020_geotiff
