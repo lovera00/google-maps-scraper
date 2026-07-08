@@ -1,0 +1,335 @@
+"""Orquestador central del pipeline multi-agente.
+
+Coordina los 5 agentes usando asyncio.Queue como buffers entre etapas.
+Corte inmediato (sin drenar colas ni flush) ante Ctrl+C/SIGTERM o si
+Google Maps deja de responder 200 (ver _abort_immediately).
+"""
+import asyncio
+import json
+import logging
+import os
+import signal
+import time
+from pathlib import Path
+
+from .config.loader import load_config
+from .config.settings import Settings
+from .utils.logging_config import setup_logging
+from .agents.query_planner import QueryPlanner
+from .agents.data_collector import DataCollector, GoogleMapsBlockedError
+from .agents.normalizer import Normalizer
+from .agents.deduplicator import Deduplicator
+from .agents.storage import Storage
+from .models.query_task import QueryTask
+from .models.grid import GridCell
+
+logger = logging.getLogger(__name__)
+
+
+class ScrapingStats:
+    def __init__(self):
+        self.total_scraped = 0
+        self.total_normalized = 0
+        self.total_discarded = 0
+        self.total_duplicates = 0
+        self.total_stored = 0
+        self.overflow_events = 0
+        self.start_time = time.monotonic()
+
+    def report(self):
+        elapsed = time.monotonic() - self.start_time
+        logger.info("=" * 55)
+        logger.info("  ESTADISTICAS FINALES DEL PIPELINE")
+        logger.info("=" * 55)
+        logger.info(f"  Scrapeados:      {self.total_scraped:>8}")
+        logger.info(f"  Normalizados:    {self.total_normalized:>8}")
+        logger.info(f"  Descartados:     {self.total_discarded:>8}")
+        logger.info(f"  Duplicados:      {self.total_duplicates:>8}")
+        logger.info(f"  Almacenados:     {self.total_stored:>8}")
+        logger.info(f"  Overflows:       {self.overflow_events:>8}")
+        logger.info(f"  Tiempo total:    {elapsed:>7.1f}s")
+        logger.info("=" * 55)
+
+
+class Orchestrator:
+    def __init__(self, config_path: str = "config.yaml"):
+        self.config = load_config(config_path)
+        setup_logging(self.config)
+        logger.info("Pipeline multi-agente inicializado")
+
+        # Colas entre agentes
+        self.task_queue: asyncio.Queue = asyncio.Queue(maxsize=0)
+        self.raw_queue: asyncio.Queue = asyncio.Queue(maxsize=2000)
+        self.normalized_queue: asyncio.Queue = asyncio.Queue(maxsize=2000)
+        self.final_queue: asyncio.Queue = asyncio.Queue(maxsize=2000)
+
+        # Agentes
+        self.planner = QueryPlanner(self.config)
+        self.collector = DataCollector(self.config)
+        self.normalizer = Normalizer(self.config)
+        self.deduplicator = Deduplicator(self.config)
+        self.storage = Storage(self.config)
+
+        # Estadisticas
+        self.stats = ScrapingStats()
+
+    async def load_tasks_from_file(self, path: str):
+        task_path = Path(path)
+        if not task_path.exists():
+            raise FileNotFoundError(f"Archivo de tareas no encontrado: {path}")
+        count = 0
+        with open(task_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                d = json.loads(line)
+                task = QueryTask.from_dict(d)
+                self.task_queue.put_nowait(task)
+                count += 1
+        logger.info(f"{count} tareas cargadas desde {path}")
+
+    def _handle_shutdown_signal(self):
+        """Callback sincrono para Ctrl+C / SIGTERM. Corta el proceso ya mismo,
+        sin drenar colas ni hacer flush."""
+        self._abort_immediately("interrupcion del usuario (Ctrl+C / SIGTERM)")
+
+    def _abort_immediately(self, reason: str):
+        """Corte duro e inmediato: nada de drenar colas, nada de flush.
+        Mata el proceso ahi mismo. Uso: Google Maps bloqueandonos, no tiene
+        sentido seguir ni esperar un shutdown ordenado."""
+        logger.error(f"ABORTANDO: {reason}")
+        os._exit(1)
+
+    async def run(self, tasks_file: str = None, db_path: str = None, resume: bool = True):
+        logger.info("=== Iniciando pipeline de scraping ===")
+
+        if db_path:
+            self.storage.db_path = db_path
+            self.storage.repo.db_path = db_path
+
+        await self.storage.initialize()
+
+        # Ctrl+C / SIGTERM: corte inmediato (ver _handle_shutdown_signal)
+        loop = asyncio.get_running_loop()
+        try:
+            loop.add_signal_handler(signal.SIGINT, self._handle_shutdown_signal)
+            loop.add_signal_handler(signal.SIGTERM, self._handle_shutdown_signal)
+        except (NotImplementedError, RuntimeError):
+            # Windows no soporta add_signal_handler
+            signal.signal(signal.SIGINT, lambda s, f: self._handle_shutdown_signal())
+            signal.signal(signal.SIGTERM, lambda s, f: self._handle_shutdown_signal())
+
+        # Cargar tareas (desde archivo o generadas)
+        if tasks_file:
+            await self.load_tasks_from_file(tasks_file)
+        else:
+            tasks = self.planner.generate_initial_tasks()
+
+            if resume:
+                completed = await self.storage.repo.get_completed_task_keys()
+                if completed:
+                    tasks = [t for t in tasks
+                             if (t.grid_cell.to_json(), t.category, t.depth) not in completed]
+                    logger.info(f"Reanudando: {len(completed)} tareas completadas, "
+                                f"{len(tasks)} tareas pendientes")
+
+                interrupted = await self.storage.repo.get_pending_or_in_progress_tasks()
+                if interrupted:
+                    for row in interrupted:
+                        cell = GridCell.from_dict(json.loads(row["grid_cell_json"]))
+                        task = QueryTask(
+                            grid_cell=cell,
+                            category=row["category"],
+                            depth=row["depth"],
+                        )
+                        task.priority = self.planner._calculate_priority(cell)
+                        self.task_queue.put_nowait(task)
+                    logger.info(f"{len(interrupted)} tareas interrumpidas re-encoladas")
+
+            for t in tasks:
+                self.task_queue.put_nowait(t)
+            logger.info(f"{len(tasks)} tareas encoladas")
+
+        await self.collector.setup()
+
+        try:
+            await asyncio.gather(
+                self._run_collector(),
+                self._run_normalizer(),
+                self._run_deduplicator(),
+                self._run_storage(),
+            )
+        except asyncio.CancelledError:
+            logger.warning("Pipeline cancelado, drenando colas...")
+        except Exception as e:
+            logger.error(f"Error fatal en el pipeline: {e}", exc_info=True)
+        finally:
+            await self.collector.teardown()
+            await self._drain_and_flush()
+
+        count = await self.storage.count()
+        logger.info(f"=== Pipeline completado. {count} negocios en BD. ===")
+        self.stats.report()
+
+    async def _drain_and_flush(self):
+        """Drena lo que quede en la cola final y persiste en PostgreSQL."""
+        logger.info("Drenando cola final para flush a PostgreSQL...")
+
+        # Drenar la cola final (items ya deduplicados pendientes de storage)
+        remaining = []
+        while not self.final_queue.empty():
+            try:
+                item = self.final_queue.get_nowait()
+                if item is not None:
+                    remaining.append(item)
+                self.final_queue.task_done()
+            except asyncio.QueueEmpty:
+                break
+
+        if remaining:
+            inserted = await self.storage.repo.insert_batch(remaining)
+            self.stats.total_stored += inserted
+            logger.info(f"Drenados {len(remaining)} items pendientes de la cola final "
+                        f"({inserted} nuevos en SQLite)")
+
+        # Flush completo de SQLite a PostgreSQL (solo si hay DSN configurado)
+        if self.storage._pg_dsn:
+            try:
+                pg_count = await self.storage.flush_to_postgres()
+                logger.info(f"PostgreSQL tiene {pg_count} registros insertados/actualizados")
+            except Exception as e:
+                logger.error(f"Error en flush a PostgreSQL: {e}", exc_info=True)
+
+        await self.storage.close()
+
+        # Exportar JSON
+        json_path = "data/output.json"
+        count = await self.storage.export_json(json_path)
+        logger.info(f"Datos exportados a {json_path}: {count} registros")
+
+    async def _run_collector(self):
+        while True:
+            try:
+                task = await asyncio.wait_for(self.task_queue.get(), timeout=10.0)
+            except asyncio.TimeoutError:
+                if self.task_queue.empty():
+                    break
+                continue
+
+            task_key = (task.grid_cell.to_json(), task.category, task.depth)
+
+            try:
+                await self.storage.repo.mark_task_in_progress(*task_key)
+
+                raw_businesses = await self.collector.scrape(task)
+                result_count = len(raw_businesses)
+
+                if result_count >= 120:
+                    new_tasks = self.planner.handle_overflow(task)
+                    for nt in new_tasks:
+                        nt_key = (nt.grid_cell.to_json(), nt.category, nt.depth)
+                        await self.storage.repo.upsert_task_pending(*nt_key)
+                        await self.task_queue.put(nt)
+                    self.stats.overflow_events += 1
+                    logger.info(f"Overflow: {result_count} resultados en celda, "
+                                f"{len(new_tasks)} sub-tareas creadas (depth={task.depth})")
+
+                for rb in raw_businesses:
+                    await self.raw_queue.put(rb)
+                self.stats.total_scraped += result_count
+
+                await self.storage.repo.mark_task_completed(*task_key, result_count)
+
+                if result_count > 0:
+                    logger.debug(f"Scraped: {result_count} resultados de {task.category}")
+
+            except GoogleMapsBlockedError as e:
+                logger.error(f"Google Maps bloqueado: {e}")
+                await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
+                self._abort_immediately(f"Google Maps no respondio 200 ({e})")
+            except Exception as e:
+                logger.error(f"Error en collector: {e}")
+                await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
+            finally:
+                self.task_queue.task_done()
+
+        await self.raw_queue.put(None)
+        logger.info("Collector finalizado")
+
+    async def _run_normalizer(self):
+        batch = []
+        batch_size = 50
+        while True:
+            item = await self.raw_queue.get()
+            if item is None:
+                if batch:
+                    for b in batch:
+                        await self.normalized_queue.put(b)
+                await self.normalized_queue.put(None)
+                break
+
+            normalized = self.normalizer.normalize(item)
+            if normalized:
+                batch.append(normalized)
+                self.stats.total_normalized += 1
+            else:
+                self.stats.total_discarded += 1
+
+            if len(batch) >= batch_size:
+                for b in batch:
+                    await self.normalized_queue.put(b)
+                batch = []
+
+            self.raw_queue.task_done()
+        logger.info("Normalizer finalizado")
+
+    async def _run_deduplicator(self):
+        batch = []
+        batch_size = self.config.dedup.batch_size
+
+        while True:
+            item = await self.normalized_queue.get()
+            if item is None:
+                if batch:
+                    deduped = await self.deduplicator.deduplicate(batch)
+                    duplicates = len(batch) - len(deduped)
+                    self.stats.total_duplicates += duplicates
+                    for b in deduped:
+                        await self.final_queue.put(b)
+                await self.final_queue.put(None)
+                break
+
+            batch.append(item)
+            if len(batch) >= batch_size:
+                deduped = await self.deduplicator.deduplicate(batch)
+                duplicates = len(batch) - len(deduped)
+                self.stats.total_duplicates += duplicates
+                for b in deduped:
+                    await self.final_queue.put(b)
+                batch = []
+
+            self.normalized_queue.task_done()
+        logger.info("Deduplicator finalizado")
+
+    async def _run_storage(self):
+        batch = []
+        batch_size = self.config.storage.batch_size
+
+        while True:
+            item = await self.final_queue.get()
+            if item is None:
+                if batch:
+                    inserted = await self.storage.insert_batch(batch)
+                    self.stats.total_stored += inserted
+                break
+
+            batch.append(item)
+            if len(batch) >= batch_size:
+                inserted = await self.storage.insert_batch(batch)
+                self.stats.total_stored += inserted
+                batch = []
+
+            self.final_queue.task_done()
+
+        logger.info(f"Storage finalizado. {self.stats.total_stored} nuevos almacenados")

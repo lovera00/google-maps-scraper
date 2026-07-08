@@ -1,0 +1,390 @@
+# Sistema Multi-Agente de Scraping de Google Maps para Paraguay
+# ============================================================
+
+# === Modo de ejecucion ===
+test_mode: false
+headless: true
+workers: 2
+
+# === Base de datos ===
+database:
+  path: "data/paraguay_businesses.db"
+  wal_mode: true
+
+# === PostgreSQL (persistencia final) ===
+# La DSN se lee de la variable de entorno PG_DSN.
+# Setearla antes de ejecutar: export PG_DSN="postgresql://user:pass@host:port/db"
+postgres:
+  enabled: false
+  dsn: ""
+
+# === Grid del Query Planner ===
+grid:
+  initial_size_km: 5.0
+  max_depth: 5
+  bounding_box:
+    lat_min: -27.6
+    lat_max: -19.3
+    lng_min: -62.6
+    lng_max: -54.3
+
+# === Categorias a buscar ===
+categories:
+  - "academia de danza"
+  - "academia de idiomas"
+  - "accesorios"
+  - "adventistas"
+  - "aeropuerto"
+  - "agencia de marketing"
+  - "agencia de viajes"
+  - "agricultura"
+  - "agroganadero"
+  - "agroveterinaria"
+  - "agua potable"
+  - "alimenticio"
+  - "ambulancia"
+  - "arquitectura"
+  - "artes marciales"
+  - "artesania"
+  - "atractivo turistico"
+  - "audiovisuales"
+  - "autoescuela"
+  - "automotor"
+  - "automoviles"
+  - "autoservicio"
+  - "balneario"
+  - "banco"
+  - "bar"
+  - "barberia"
+  - "barrio cerrado"
+  - "baterias"
+  - "bazar"
+  - "bebidas"
+  - "biblioteca"
+  - "bomberos"
+  - "boutique"
+  - "cabaña"
+  - "cafeteria"
+  - "cajero automatico"
+  - "calzados"
+  - "canchas"
+  - "capilla"
+  - "carniceria"
+  - "carteras"
+  - "casa de cambio"
+  - "casa de fotografia"
+  - "casa de retiro"
+  - "casino"
+  - "caza y pesca"
+  - "celulares"
+  - "cementerio"
+  - "centro comercial"
+  - "centro medico"
+  - "ceramica"
+  - "cerrajeria"
+  - "cerveceria"
+  - "chaperia y pintura"
+  - "chiperia"
+  - "churrasqueria"
+  - "ciclismo"
+  - "cine"
+  - "clinica"
+  - "club"
+  - "cobranza"
+  - "cocina paraguaya"
+  - "colchoneria"
+  - "colegio nacional"
+  - "colegio privado"
+  - "comedor"
+  - "comercial"
+  - "comida oriental"
+  - "comida saludable"
+  - "comisaria"
+  - "compañia energetica"
+  - "compañias de celulares"
+  - "condominio"
+  - "confiteria"
+  - "construccion"
+  - "construcción"
+  - "consultorio"
+  - "cooperativa"
+  - "copaco"
+  - "copetin"
+  - "cotillon"
+  - "courier"
+  - "coworking"
+  - "creditos"
+  - "crossfit"
+  - "dependencias gubernamentales"
+  - "deportes"
+  - "deposito de materiales"
+  - "desarrolladora inmobiliaria"
+  - "despensa"
+  - "diagnostico por imagenes"
+  - "dietetica"
+  - "distribuidora"
+  - "edificios"
+  - "educación"
+  - "electricidad"
+  - "electrodomesticos"
+  - "electronica"
+  - "embutidos"
+  - "empanadas"
+  - "empeño"
+  - "entes públicos"
+  - "entidades financieras"
+  - "equipamiento"
+  - "escribania"
+  - "escuela"
+  - "esparcimiento"
+  - "estacion de servicio"
+  - "estacionamiento"
+  - "estancia"
+  - "estudio contable"
+  - "estudio juridico y contable"
+  - "estética"
+  - "evangelicos"
+  - "eventos"
+  - "fabrica"
+  - "facultad"
+  - "farmacia"
+  - "fast-food"
+  - "ferreteria"
+  - "financiera"
+  - "floreria"
+  - "fraccion"
+  - "franquicia"
+  - "frigorifico"
+  - "fruteria y verduleria"
+  - "fuerzas armadas"
+  - "funeraria"
+  - "futbol 5"
+  - "galeria comercial"
+  - "gasolinera"
+  - "geriatrico"
+  - "gimnasio"
+  - "gomeria"
+  - "granja"
+  - "guarderia"
+  - "hamburgueseria"
+  - "heladeria"
+  - "herreria"
+  - "hogar"
+  - "hospedaje"
+  - "hospital"
+  - "hotel"
+  - "iglesia"
+  - "iluminacion"
+  - "importadora"
+  - "imprenta"
+  - "industrial"
+  - "informatica"
+  - "inmobiliaria"
+  - "inmobiliario"
+  - "instituto"
+  - "insumos"
+  - "joyeria"
+  - "jugueteria"
+  - "juzgado"
+  - "kinesiologia"
+  - "kiosco"
+  - "laboratorio"
+  - "lacteos"
+  - "lavadero"
+  - "lavanderia"
+  - "lenceria"
+  - "libreria"
+  - "limpieza"
+  - "lomiteria"
+  - "loteadora"
+  - "lubricante"
+  - "maderas"
+  - "makeup"
+  - "mayorista"
+  - "merceria"
+  - "metalurgica"
+  - "mini market"
+  - "ministerio"
+  - "motel"
+  - "moto"
+  - "moto repuestos"
+  - "muebleria"
+  - "museo"
+  - "musica"
+  - "nails"
+  - "neumaticos"
+  - "notaria"
+  - "nutricionista"
+  - "odontologia"
+  - "optica"
+  - "padel"
+  - "panaderia"
+  - "parque"
+  - "parrilla"
+  - "parroquia"
+  - "paseo"
+  - "peluqueria"
+  - "perfumeria"
+  - "pescaderia"
+  - "petshop"
+  - "pintureria"
+  - "piscinas"
+  - "pizzeria"
+  - "plaza"
+  - "polleria"
+  - "posada"
+  - "productos importados"
+  - "psicologia"
+  - "pub"
+  - "publicidad"
+  - "publicitaria"
+  - "puerto"
+  - "puesto de salud"
+  - "quinta"
+  - "radio"
+  - "rancho"
+  - "refrigeracion"
+  - "regalos"
+  - "religión"
+  - "remiseria"
+  - "rent a car"
+  - "repuesto"
+  - "restaurante"
+  - "resto bar"
+  - "ropa"
+  - "ropa deportiva"
+  - "ropa infantil"
+  - "ropa usada"
+  - "rotiseria"
+  - "salud"
+  - "sanatorio"
+  - "sanitarios"
+  - "sastreria"
+  - "seguridad"
+  - "seguros"
+  - "serigrafia"
+  - "servicios graficos"
+  - "servicios varios"
+  - "shopping"
+  - "spa"
+  - "supermercado"
+  - "sushi"
+  - "taller"
+  - "taller de motos"
+  - "tapiceria"
+  - "tatuajes"
+  - "taxi"
+  - "teatro"
+  - "tecnología"
+  - "tejidos"
+  - "tenis"
+  - "terminal de omnibus"
+  - "transportes"
+  - "turismo"
+  - "universidad"
+  - "vape"
+  - "vestimenta"
+  - "veterinaria"
+  - "vidrieria"
+  - "vinoteca"
+  - "vivero"
+
+# === Rate Limiting ===
+rate_limit:
+  request_delay_seconds: 3
+  max_retries: 3
+  retry_backoff_base: 2
+  max_scroll_iterations: 50
+
+# === Deduplicacion ===
+dedup:
+  proximity_threshold_meters: 50
+  batch_size: 100
+  use_spatial_hash: true
+
+# === Storage ===
+storage:
+  batch_size: 50
+  update_existing: true
+
+# === Proxies ===
+proxies:
+  enabled: false
+  source: "file"
+  file_path: "data/proxies.txt"
+  rotation_strategy: "round_robin"
+  max_failures: 3
+  cooldown_minutes: 10
+  health_check_url: "https://www.google.com"
+
+# === Logging ===
+logging:
+  level: "INFO"
+  file: "logs/scraper.log"
+  max_file_size_mb: 50
+  backup_count: 5
+  format: "%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+
+# === Mock/Test ===
+mock:
+  html_directory: "mocks/google_maps"
+  simulate_delay: true
+  mock_delay_seconds: 0.3
+
+# === OSM ===
+osm:
+  data_dir: "data/osm"
+  download_url: "https://download.geofabrik.de/south-america/paraguay-latest.osm.pbf"
+  download_retries: 3
+  download_backoff: 2.0
+  frente_avenida_threshold_m: 120.0
+  cerca_agua_threshold_m: 400.0
+  h3_resolution: 9
+
+# === Ciudades prioritarias ===
+priority_cities:
+  - name: "Asuncion"
+    lat: -25.282
+    lng: -57.635
+  - name: "Ciudad del Este"
+    lat: -25.508
+    lng: -54.675
+  - name: "Encarnacion"
+    lat: -27.332
+    lng: -55.886
+  - name: "San Lorenzo"
+    lat: -25.340
+    lng: -57.510
+  - name: "Luque"
+    lat: -25.270
+    lng: -57.488
+  - name: "Capiata"
+    lat: -25.355
+    lng: -57.443
+  - name: "Lambare"
+    lat: -25.347
+    lng: -57.632
+  - name: "Fernando de la Mora"
+    lat: -25.324
+    lng: -57.573
+  - name: "Limpio"
+    lat: -25.170
+    lng: -57.490
+  - name: "Nemby"
+    lat: -25.395
+    lng: -57.541
+  - name: "Pedro Juan Caballero"
+    lat: -22.544
+    lng: -55.759
+  - name: "Coronel Oviedo"
+    lat: -25.446
+    lng: -56.439
+  - name: "Concepcion"
+    lat: -23.407
+    lng: -57.434
+  - name: "Villarrica"
+    lat: -25.782
+    lng: -56.449
+  - name: "Pilar"
+    lat: -26.856
+    lng: -58.303

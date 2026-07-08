@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Análisis de Radio - Paraguay</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
+#map { height: 100vh; width: 100%; }
+#panel {
+    position: absolute; top: 10px; right: 10px; width: 340px; max-height: calc(100vh - 20px);
+    overflow-y: auto; background: #fff; border-radius: 8px; box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+    z-index: 1000; font-size: 14px;
+}
+#panel h2 { font-size: 16px; padding: 14px 16px 10px; border-bottom: 1px solid #eee; color: #333; }
+.panel-section { padding: 10px 16px; border-bottom: 1px solid #f0f0f0; }
+.panel-section label { display: block; font-size: 12px; color: #888; margin-bottom: 4px; font-weight: 600; }
+.coords-row { display: flex; gap: 6px; align-items: center; }
+.coords-row input { width: 100%; padding: 6px 8px; border: 1px solid #ddd; border-radius: 4px; font-size: 13px; }
+.coords-row input:focus { border-color: #4a90d9; outline: none; }
+.coords-row button {
+    padding: 6px 14px; background: #4a90d9; color: #fff; border: none; border-radius: 4px;
+    cursor: pointer; font-size: 13px; white-space: nowrap;
+}
+.coords-row button:hover { background: #3a7bc8; }
+.slider-row { display: flex; align-items: center; gap: 8px; }
+.slider-row input[type=range] { flex: 1; }
+.slider-row .radius-val { font-weight: 600; min-width: 70px; text-align: right; color: #4a90d9; }
+.stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.stat-box { background: #f7f9fc; padding: 10px; border-radius: 6px; text-align: center; }
+.stat-box .stat-val { font-size: 22px; font-weight: 700; color: #333; }
+.stat-box .stat-lbl { font-size: 11px; color: #888; margin-top: 2px; }
+.cat-table { width: 100%; border-collapse: collapse; margin-top: 4px; }
+.cat-table th, .cat-table td { padding: 4px 8px 4px 0; text-align: left; font-size: 12px; }
+.cat-table th { color: #888; font-weight: 600; border-bottom: 1px solid #eee; }
+.cat-table td { border-bottom: 1px solid #f5f5f5; }
+.cat-table .cat-count { text-align: right; color: #4a90d9; font-weight: 600; padding-left: 16px; }
+.cat-table .cat-pct { text-align: right; color: #999; font-size: 11px; padding-left: 16px; padding-right: 0; }
+.location-card { display: flex; flex-direction: column; gap: 6px; border-radius: 8px; padding: 12px 14px; background: #f5f5f5; }
+.location-title { font-weight: 800; font-size: 15px; color: #333; margin-bottom: 2px; }
+.location-row { display: flex; flex-direction: row; column-gap: 12px; }
+.location-label { font-weight: 600; font-size: 12px; color: #666; flex: 0 0 60px; }
+.location-value { font-weight: 400; font-size: 12px; color: #333; }
+.loading { opacity: 0.5; pointer-events: none; }
+.error-msg { color: #e74c3c; font-size: 12px; padding: 8px 0; }
+.spinner { display: none; text-align: center; padding: 8px; color: #999; font-size: 12px; }
+.spinner.active { display: block; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<div id="panel">
+    <h2>Análisis de Radio</h2>
+
+    <div class="panel-section">
+        <label>Coordenadas</label>
+        <div class="coords-row">
+            <input type="number" id="latInput" placeholder="Latitud" step="any" value="-25.282">
+            <input type="number" id="lngInput" placeholder="Longitud" step="any" value="-57.635">
+            <button onclick="goToCoords()">Ir</button>
+        </div>
+    </div>
+
+    <div class="panel-section">
+        <label>Radio: <span id="radiusDisplay">5.0</span> km</label>
+        <div class="slider-row">
+            <input type="range" id="radiusSlider" min="0.5" max="50" step="0.1" value="5">
+            <span class="radius-val" id="radiusVal">5.0 km</span>
+        </div>
+    </div>
+
+    <div class="panel-section" id="osmSection" style="display:none">
+        <div class="location-card">
+            <div class="location-title">Ubicación</div>
+            <div class="location-row">
+                <span class="location-label">Calle</span>
+                <span class="location-value" id="locCalle">--</span>
+            </div>
+            <div class="location-row">
+                <span class="location-label">Barrio</span>
+                <span class="location-value" id="locBarrio">--</span>
+            </div>
+            <div class="location-row">
+                <span class="location-label">Ciudad</span>
+                <span class="location-value" id="locCiudad">--</span>
+            </div>
+            <div class="location-row">
+                <span class="location-label">País</span>
+                <span class="location-value" id="locPais">Paraguay</span>
+            </div>
+            <div class="location-row">
+                <span class="location-label">Ubicado a</span>
+                <span class="location-value" id="locUbicadoA">--</span>
+            </div>
+        </div>
+        <div class="stat-grid" style="grid-template-columns:1fr 1fr 1fr;gap:4px;margin-top:10px">
+            <div class="stat-box" style="padding:6px">
+                <div class="stat-val" style="font-size:14px" id="osmDistParque">--</div>
+                <div class="stat-lbl">a parque</div>
+            </div>
+            <div class="stat-box" style="padding:6px">
+                <div class="stat-val" style="font-size:14px" id="osmDistAgua">--</div>
+                <div class="stat-lbl">a agua</div>
+            </div>
+            <div class="stat-box" style="padding:6px">
+                <div class="stat-val" style="font-size:14px" id="osmDistHosp">--</div>
+                <div class="stat-lbl">a hospital</div>
+            </div>
+            <div class="stat-box" style="padding:6px">
+                <div class="stat-val" style="font-size:14px" id="osmDistUni">--</div>
+                <div class="stat-lbl">a universidad</div>
+            </div>
+            <div class="stat-box" style="padding:6px">
+                <div class="stat-val" style="font-size:14px" id="osmFlags">--</div>
+                <div class="stat-lbl">flags</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel-section" id="statsSection">
+        <div class="spinner" id="spinner">Consultando...</div>
+        <div id="errorMsg" class="error-msg" style="display:none"></div>
+        <div class="stat-grid" id="statGrid" style="display:none">
+            <div class="stat-box">
+                <div class="stat-val" id="popVal">--</div>
+                <div class="stat-lbl">Población</div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-val" id="bizVal">--</div>
+                <div class="stat-lbl">Comercios</div>
+            </div>
+            <div class="stat-box" style="grid-column: span 2;">
+                <div class="stat-val" id="ratioVal">--</div>
+                <div class="stat-lbl">Comercios / 1.000 hab.</div>
+            </div>
+        </div>
+    </div>
+
+    <div class="panel-section" id="categoriesSection" style="display:none">
+        <label>Por actividad comercial (top 10)</label>
+        <table class="cat-table" id="catTable"></table>
+    </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script>
+// ── Mapa ──────────────────────────────────────────────────────────
+var map = L.map('map').setView([-23.4, -58.4], 7);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    attribution: '&copy; OpenStreetMap contributors',
+    maxZoom: 19,
+}).addTo(map);
+
+var marker = null;
+var circle = null;
+var bizMarkers = L.layerGroup().addTo(map);
+var currentLat = -25.282;
+var currentLng = -57.635;
+var currentRadius = 5.0;
+var debounceTimer = null;
+
+// Marcador inicial
+marker = L.marker([currentLat, currentLng], { draggable: true }).addTo(map);
+circle = L.circle([currentLat, currentLng], { radius: currentRadius * 1000, color: '#4a90d9', fillOpacity: 0.1 }).addTo(map);
+
+marker.on('dragend', function(e) {
+    var pos = e.target.getLatLng();
+    currentLat = pos.lat;
+    currentLng = pos.lng;
+    circle.setLatLng(pos);
+    updateInputs();
+    scheduleFetch();
+});
+
+map.on('click', function(e) {
+    currentLat = e.latlng.lat;
+    currentLng = e.latlng.lng;
+    marker.setLatLng(e.latlng);
+    circle.setLatLng(e.latlng);
+    updateInputs();
+    scheduleFetch();
+});
+
+// ── Slider ────────────────────────────────────────────────────────
+var slider = document.getElementById('radiusSlider');
+var radiusVal = document.getElementById('radiusVal');
+var radiusDisplay = document.getElementById('radiusDisplay');
+
+slider.addEventListener('input', function() {
+    currentRadius = parseFloat(this.value);
+    radiusVal.textContent = currentRadius.toFixed(1) + ' km';
+    radiusDisplay.textContent = currentRadius.toFixed(1);
+    circle.setRadius(currentRadius * 1000);
+    scheduleFetch();
+});
+
+function updateInputs() {
+    document.getElementById('latInput').value = currentLat.toFixed(6);
+    document.getElementById('lngInput').value = currentLng.toFixed(6);
+}
+
+// ── Boton Ir ──────────────────────────────────────────────────────
+function goToCoords() {
+    var lat = parseFloat(document.getElementById('latInput').value);
+    var lng = parseFloat(document.getElementById('lngInput').value);
+    if (isNaN(lat) || isNaN(lng)) return;
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return;
+    currentLat = lat;
+    currentLng = lng;
+    marker.setLatLng([lat, lng]);
+    circle.setLatLng([lat, lng]);
+    map.setView([lat, lng], map.getZoom());
+    scheduleFetch();
+}
+
+// ── Fetch con debounce ────────────────────────────────────────────
+function scheduleFetch() {
+    if (debounceTimer) clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(function() { fetchStats(); fetchOSM(); }, 300);
+}
+
+async function fetchStats() {
+    var spinner = document.getElementById('spinner');
+    var err = document.getElementById('errorMsg');
+    var grid = document.getElementById('statGrid');
+    var catSec = document.getElementById('categoriesSection');
+    spinner.classList.add('active');
+    err.style.display = 'none';
+
+    try {
+        var url = '/api/stats?lat=' + currentLat + '&lng=' + currentLng + '&radius_km=' + currentRadius;
+        var resp = await fetch(url);
+        if (!resp.ok) {
+            var data = await resp.json();
+            throw new Error(data.detail || 'Error ' + resp.status);
+        }
+        var data = await resp.json();
+
+        // Stats
+        document.getElementById('popVal').textContent = data.population.toLocaleString('es-PY');
+        document.getElementById('bizVal').textContent = data.businesses_total.toLocaleString('es-PY');
+        document.getElementById('ratioVal').textContent = data.businesses_per_1000.toFixed(2);
+        grid.style.display = 'grid';
+
+        // Tabla de actividad comercial (top 10)
+        var cats = Object.entries(data.by_category)
+            .filter(function(entry) { return entry[0] && entry[0] !== 'null'; })
+            .sort(function(a, b) { return b[1] - a[1]; })
+            .slice(0, 10);
+        if (cats.length > 0) {
+            catSec.style.display = 'block';
+            var tbody = cats.map(function(entry) {
+                var pct = data.businesses_total > 0
+                    ? (entry[1] / data.businesses_total * 100).toFixed(1)
+                    : '0.0';
+                return '<tr><td>' + escHtml(entry[0]) + '</td>'
+                    + '<td class="cat-count">' + entry[1].toLocaleString('es-PY') + '</td>'
+                    + '<td class="cat-pct">' + pct + '%</td></tr>';
+            }).join('');
+            document.getElementById('catTable').innerHTML =
+                '<tr><th>Actividad comercial</th><th class="cat-count">Cant.</th><th class="cat-pct">%</th></tr>' + tbody;
+        } else {
+            catSec.style.display = 'none';
+        }
+
+        // Limpiar y pintar comercios
+        bizMarkers.clearLayers();
+        var businesses = data.businesses || [];
+        for (var i = 0; i < businesses.length; i++) {
+            var b = businesses[i];
+            var m = L.circleMarker([b.lat, b.lng], {
+                radius: 4,
+                color: '#4a90d9',
+                fillColor: '#4a90d9',
+                fillOpacity: 0.6,
+                weight: 1,
+            }).bindTooltip('<b>' + escHtml(b.name) + '</b><br>' + escHtml(b.category), {
+                direction: 'top',
+                offset: [0, -6],
+            });
+            bizMarkers.addLayer(m);
+        }
+
+    } catch (e) {
+        err.textContent = 'Error: ' + e.message;
+        err.style.display = 'block';
+        grid.style.display = 'none';
+        catSec.style.display = 'none';
+    } finally {
+        spinner.classList.remove('active');
+    }
+}
+
+function escHtml(s) {
+    var d = document.createElement('div');
+    d.textContent = s;
+    return d.innerHTML;
+}
+
+// ── OSM Info ──────────────────────────────────────────────────────
+async function fetchOSM() {
+    try {
+        var url = '/api/osm?lat=' + currentLat + '&lng=' + currentLng;
+        var resp = await fetch(url);
+        if (!resp.ok) {
+            var errBody = await resp.text();
+            console.error('fetchOSM: /api/osm respondio ' + resp.status, errBody);
+            return;
+        }
+        var data = await resp.json();
+        console.debug('fetchOSM data:', data);
+
+        var sec = document.getElementById('osmSection');
+        sec.style.display = 'block';
+
+        // Calle (vía más cercana)
+        document.getElementById('locCalle').textContent =
+            data.nearest_road ? data.nearest_road.via : '--';
+
+        // Barrio / Ciudad
+        var locate = data.locate || {};
+        document.getElementById('locBarrio').textContent = locate.barrio
+            ? (locate.barrio_aproximado ? '~' + locate.barrio : locate.barrio)
+            : '--';
+        document.getElementById('locCiudad').textContent = locate.ciudad
+            ? (locate.aproximado ? '~' + locate.ciudad : locate.ciudad)
+            : '--';
+
+        // Ubicado a: distancia + nombre de la avenida principal
+        var ubicadoDiv = document.getElementById('locUbicadoA');
+        if (data.via_principal) {
+            ubicadoDiv.textContent = formatDist(data.via_principal.distancia_m)
+                + (data.via_principal.nombre ? ' de ' + data.via_principal.nombre : ' de la vía principal más cercana')
+                + (data.osm_features && data.osm_features.frente_avenida ? ' (frente a avenida)' : '');
+        } else {
+            ubicadoDiv.textContent = '--';
+        }
+
+        // OSM features
+        var feat = data.osm_features;
+        if (feat) {
+            document.getElementById('osmDistParque').textContent = formatDist(feat.dist_parque_m);
+            document.getElementById('osmDistAgua').textContent = formatDist(feat.dist_agua_m);
+            document.getElementById('osmDistHosp').textContent = formatDist(feat.dist_hospital_m);
+            document.getElementById('osmDistUni').textContent = formatDist(feat.dist_universidad_m);
+            var flags = [];
+            if (feat.frente_avenida) flags.push('avenida');
+            if (feat.cerca_agua) flags.push('agua');
+            document.getElementById('osmFlags').textContent = flags.length > 0 ? flags.join(', ') : '-';
+        }
+    } catch (e) {
+        console.error('fetchOSM error:', e);
+    }
+}
+
+function formatDist(m) {
+    if (m == null) return '--';
+    if (m >= 1000) return (m / 1000).toFixed(1) + ' km';
+    return Math.round(m) + ' m';
+}
+
+// ── Fetch inicial ─────────────────────────────────────────────────
+fetchStats();
+fetchOSM();
+</script>
+</body>
+</html>

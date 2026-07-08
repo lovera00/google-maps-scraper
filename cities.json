@@ -1,0 +1,1317 @@
+[
+  {
+    "name": "Bahía Negra",
+    "lat": -19.9603571,
+    "lng": -60.036395
+  },
+  {
+    "name": "Capitán Carmelo Peralta",
+    "lat": -25.4574616,
+    "lng": -56.4484011
+  },
+  {
+    "name": "Fuerte Olimpo",
+    "lat": -21.0385406,
+    "lng": -57.8748123
+  },
+  {
+    "name": "Puerto Casado",
+    "lat": -22.285746,
+    "lng": -57.9431435
+  },
+  {
+    "name": "Ciudad del Este",
+    "lat": -25.5169015,
+    "lng": -54.6168645
+  },
+  {
+    "name": "Doctor Juan León Mallorquín",
+    "lat": -25.4293452,
+    "lng": -55.2525403
+  },
+  {
+    "name": "Doctor Raúl Peña",
+    "lat": -24.1315039,
+    "lng": -55.6365012
+  },
+  {
+    "name": "Domingo Martínez de Irala",
+    "lat": -25.9104961,
+    "lng": -54.6290891
+  },
+  {
+    "name": "Hernandarias",
+    "lat": -25.4041794,
+    "lng": -54.6320387
+  },
+  {
+    "name": "Iruña",
+    "lat": -26.1118133,
+    "lng": -55.056369
+  },
+  {
+    "name": "Itakyry",
+    "lat": -24.9827722,
+    "lng": -55.1520423
+  },
+  {
+    "name": "Juan Emiliano O'Leary",
+    "lat": -25.2899456,
+    "lng": -57.6454376
+  },
+  {
+    "name": "Los Cedrales",
+    "lat": -25.6584029,
+    "lng": -54.7204891
+  },
+  {
+    "name": "Mbaracayú",
+    "lat": -25.0282763,
+    "lng": -54.824091
+  },
+  {
+    "name": "Minga Guazú",
+    "lat": -25.4910326,
+    "lng": -54.767743
+  },
+  {
+    "name": "Minga Porá",
+    "lat": -24.8760322,
+    "lng": -54.9352852
+  },
+  {
+    "name": "Naranjal",
+    "lat": -25.9739991,
+    "lng": -55.1901109
+  },
+  {
+    "name": "Ñacunday",
+    "lat": -25.9798069,
+    "lng": -54.6831659
+  },
+  {
+    "name": "Presidente Franco",
+    "lat": -25.5651763,
+    "lng": -54.6156341
+  },
+  {
+    "name": "San Alberto",
+    "lat": -24.9765429,
+    "lng": -54.9116344
+  },
+  {
+    "name": "San Cristóbal",
+    "lat": -25.2947866,
+    "lng": -57.5669744
+  },
+  {
+    "name": "Santa Fe del Paraná",
+    "lat": -25.2269711,
+    "lng": -54.7032888
+  },
+  {
+    "name": "Santa Rita",
+    "lat": -25.8004863,
+    "lng": -55.0934459
+  },
+  {
+    "name": "Santa Rosa del Monday",
+    "lat": -25.8143908,
+    "lng": -54.9049752
+  },
+  {
+    "name": "Tavapy",
+    "lat": -25.663704,
+    "lng": -54.9958621
+  },
+  {
+    "name": "Yguazú",
+    "lat": -25.4634017,
+    "lng": -55.0011501
+  },
+  {
+    "name": "Bella Vista Norte",
+    "lat": -22.1231581,
+    "lng": -56.5133016
+  },
+  {
+    "name": "Capitán Bado",
+    "lat": -23.265254,
+    "lng": -55.5373341
+  },
+  {
+    "name": "Cerro Corá",
+    "lat": -22.6333,
+    "lng": -56.1333
+  },
+  {
+    "name": "Karapaí",
+    "lat": -23.489011,
+    "lng": -56.031763
+  },
+  {
+    "name": "Pedro Juan Caballero",
+    "lat": -22.5497781,
+    "lng": -55.7384312
+  },
+  {
+    "name": "Zanja Pytá",
+    "lat": -22.6298609,
+    "lng": -55.6319262
+  },
+  {
+    "name": "Asunción",
+    "lat": -25.2800459,
+    "lng": -57.6343814
+  },
+  {
+    "name": "Boquerón",
+    "lat": -22.6643064,
+    "lng": -61.0015877
+  },
+  {
+    "name": "Filadelfia",
+    "lat": -22.3525402,
+    "lng": -60.0351707
+  },
+  {
+    "name": "Loma Plata",
+    "lat": -22.3848499,
+    "lng": -59.8382177
+  },
+  {
+    "name": "Mariscal José Félix Estigarribia",
+    "lat": -22.0297927,
+    "lng": -60.5984488
+  },
+  {
+    "name": "Caaguazú",
+    "lat": -25.333333,
+    "lng": -55.833333
+  },
+  {
+    "name": "Carayaó",
+    "lat": -25.2003076,
+    "lng": -56.397201
+  },
+  {
+    "name": "Coronel Oviedo",
+    "lat": -25.450055,
+    "lng": -56.4406994
+  },
+  {
+    "name": "Doctor Cecilio Báez",
+    "lat": -25.4763579,
+    "lng": -54.7665196
+  },
+  {
+    "name": "Doctor Juan Eulogio Estigarribia",
+    "lat": -25.3715319,
+    "lng": -55.7044814
+  },
+  {
+    "name": "Doctor Juan Manuel Frutos",
+    "lat": -25.3859791,
+    "lng": -55.8332378
+  },
+  {
+    "name": "José Domingo Ocampos",
+    "lat": -25.4127668,
+    "lng": -55.428789
+  },
+  {
+    "name": "La Pastora",
+    "lat": -25.2469599,
+    "lng": -56.5383271
+  },
+  {
+    "name": "Mariscal Francisco Solano López",
+    "lat": -25.3582199,
+    "lng": -57.4459844
+  },
+  {
+    "name": "Nueva Londres",
+    "lat": -25.4044721,
+    "lng": -56.5498473
+  },
+  {
+    "name": "Nueva Toledo",
+    "lat": -24.9707185,
+    "lng": -55.6244966
+  },
+  {
+    "name": "Raúl Arsenio Oviedo",
+    "lat": -25.1941535,
+    "lng": -55.6042623
+  },
+  {
+    "name": "Regimiento de Infantería Tres Corrales",
+    "lat": -23.4496,
+    "lng": -56.1175
+  },
+  {
+    "name": "Repatriación",
+    "lat": -25.5365912,
+    "lng": -55.9931355
+  },
+  {
+    "name": "San Joaquín",
+    "lat": -25.0276651,
+    "lng": -56.0439584
+  },
+  {
+    "name": "San José de los Arroyos",
+    "lat": -25.5322822,
+    "lng": -56.7317808
+  },
+  {
+    "name": "Santa Rosa del Mbutuy",
+    "lat": -24.9797544,
+    "lng": -56.2540147
+  },
+  {
+    "name": "Simón Bolívar",
+    "lat": -25.0533342,
+    "lng": -56.3270134
+  },
+  {
+    "name": "Tembiaporá",
+    "lat": -25.3244189,
+    "lng": -55.3794201
+  },
+  {
+    "name": "Tres de Febrero",
+    "lat": -25.2457526,
+    "lng": -55.7752737
+  },
+  {
+    "name": "Vaquería",
+    "lat": -25.0016944,
+    "lng": -55.8225004
+  },
+  {
+    "name": "Yhú",
+    "lat": -25.056433,
+    "lng": -55.9224442
+  },
+  {
+    "name": "Abaí",
+    "lat": -26.0409337,
+    "lng": -55.9442315
+  },
+  {
+    "name": "Buena Vista",
+    "lat": -26.1839492,
+    "lng": -56.082775
+  },
+  {
+    "name": "Caazapá",
+    "lat": -26.166667,
+    "lng": -56.0
+  },
+  {
+    "name": "Doctor Moisés Santiago Bertoni",
+    "lat": -25.2991101,
+    "lng": -57.560101
+  },
+  {
+    "name": "Fulgencio Yegros",
+    "lat": -26.4555348,
+    "lng": -56.4037709
+  },
+  {
+    "name": "General Higinio Morínigo",
+    "lat": -26.0272686,
+    "lng": -56.0845959
+  },
+  {
+    "name": "Maciel",
+    "lat": -26.1825151,
+    "lng": -56.4726609
+  },
+  {
+    "name": "San Juan Nepomuceno",
+    "lat": -26.1115601,
+    "lng": -55.9360092
+  },
+  {
+    "name": "Tavaí",
+    "lat": -26.1780881,
+    "lng": -55.4976427
+  },
+  {
+    "name": "Tres de Mayo",
+    "lat": -25.5563398,
+    "lng": -54.6256647
+  },
+  {
+    "name": "Yuty",
+    "lat": -26.6141187,
+    "lng": -56.2475118
+  },
+  {
+    "name": "Corpus Christi",
+    "lat": -24.078626,
+    "lng": -54.9399763
+  },
+  {
+    "name": "Curuguaty",
+    "lat": -24.4694166,
+    "lng": -55.6945253
+  },
+  {
+    "name": "General Francisco Caballero Álvarez",
+    "lat": -24.1556231,
+    "lng": -54.6656297
+  },
+  {
+    "name": "Itanará",
+    "lat": -23.7519813,
+    "lng": -55.4645214
+  },
+  {
+    "name": "Katueté",
+    "lat": -24.2485389,
+    "lng": -54.7595876
+  },
+  {
+    "name": "La Paloma del Espíritu Santo",
+    "lat": -24.1324273,
+    "lng": -54.612178
+  },
+  {
+    "name": "Laurel",
+    "lat": -24.5635433,
+    "lng": -54.9586833
+  },
+  {
+    "name": "Maracaná",
+    "lat": -24.1899734,
+    "lng": -56.1197791
+  },
+  {
+    "name": "Nueva Esperanza",
+    "lat": -24.5060025,
+    "lng": -54.8575842
+  },
+  {
+    "name": "Puerto Adela",
+    "lat": -24.4844244,
+    "lng": -54.3856984
+  },
+  {
+    "name": "Salto del Guairá",
+    "lat": -24.0616604,
+    "lng": -54.305644
+  },
+  {
+    "name": "Villa Ygatimí",
+    "lat": -24.1228762,
+    "lng": -55.6447411
+  },
+  {
+    "name": "Yasy Cañy",
+    "lat": -24.5236147,
+    "lng": -55.8829147
+  },
+  {
+    "name": "Yby Pytá",
+    "lat": -24.8764719,
+    "lng": -55.6492906
+  },
+  {
+    "name": "Ybyrarobaná",
+    "lat": -24.3096917,
+    "lng": -55.0535649
+  },
+  {
+    "name": "Ypejhú",
+    "lat": -23.888163,
+    "lng": -55.4411803
+  },
+  {
+    "name": "Areguá",
+    "lat": -25.3129299,
+    "lng": -57.3846579
+  },
+  {
+    "name": "Capiatá",
+    "lat": -25.3548171,
+    "lng": -57.4427315
+  },
+  {
+    "name": "Fernando de la Mora",
+    "lat": -25.3281673,
+    "lng": -57.5521492
+  },
+  {
+    "name": "Guarambaré",
+    "lat": -25.4920858,
+    "lng": -57.4558665
+  },
+  {
+    "name": "Itá",
+    "lat": -25.5074747,
+    "lng": -57.3631906
+  },
+  {
+    "name": "Itauguá",
+    "lat": -25.3947318,
+    "lng": -57.3532892
+  },
+  {
+    "name": "Julián Augusto Saldívar",
+    "lat": -25.4439,
+    "lng": -57.4430461
+  },
+  {
+    "name": "Lambaré",
+    "lat": -25.3455354,
+    "lng": -57.6261456
+  },
+  {
+    "name": "Limpio",
+    "lat": -25.1728768,
+    "lng": -57.4778284
+  },
+  {
+    "name": "Luque",
+    "lat": -25.2665417,
+    "lng": -57.4926928
+  },
+  {
+    "name": "Mariano Roque Alonso",
+    "lat": -25.2118123,
+    "lng": -57.5346458
+  },
+  {
+    "name": "Nueva Italia",
+    "lat": -25.6120904,
+    "lng": -57.4676865
+  },
+  {
+    "name": "Ñemby",
+    "lat": -25.3924542,
+    "lng": -57.5471112
+  },
+  {
+    "name": "San Antonio",
+    "lat": -25.411516,
+    "lng": -57.5758258
+  },
+  {
+    "name": "San Lorenzo",
+    "lat": -25.3425224,
+    "lng": -57.509397
+  },
+  {
+    "name": "Villa Elisa",
+    "lat": -25.3715212,
+    "lng": -57.5898279
+  },
+  {
+    "name": "Villeta",
+    "lat": -25.5045192,
+    "lng": -57.5693789
+  },
+  {
+    "name": "Ypacaraí",
+    "lat": -25.4046805,
+    "lng": -57.2857757
+  },
+  {
+    "name": "Ypané",
+    "lat": -25.4573519,
+    "lng": -57.5092575
+  },
+  {
+    "name": "Arroyito",
+    "lat": -23.1736945,
+    "lng": -56.7749397
+  },
+  {
+    "name": "Azotey",
+    "lat": -23.3145263,
+    "lng": -56.4883184
+  },
+  {
+    "name": "Belén",
+    "lat": -23.4698991,
+    "lng": -57.263577
+  },
+  {
+    "name": "Concepción",
+    "lat": -23.1775,
+    "lng": -57.1675
+  },
+  {
+    "name": "Horqueta",
+    "lat": -23.344573,
+    "lng": -57.0513696
+  },
+  {
+    "name": "Itacuá",
+    "lat": -22.4849968,
+    "lng": -57.8399918
+  },
+  {
+    "name": "Loreto",
+    "lat": -23.2745683,
+    "lng": -57.3238358
+  },
+  {
+    "name": "Paso Barreto",
+    "lat": -23.0484433,
+    "lng": -57.1218936
+  },
+  {
+    "name": "Paso Horqueta",
+    "lat": -23.0756831,
+    "lng": -57.3851592
+  },
+  {
+    "name": "San Alfredo",
+    "lat": -22.8844489,
+    "lng": -57.4050333
+  },
+  {
+    "name": "San Carlos del Apa",
+    "lat": -22.2451434,
+    "lng": -57.2873989
+  },
+  {
+    "name": "San Lázaro",
+    "lat": -22.1078086,
+    "lng": -57.9629855
+  },
+  {
+    "name": "Sargento José Félix López",
+    "lat": -20.5538775,
+    "lng": -62.2535448
+  },
+  {
+    "name": "Yby Yaú",
+    "lat": -22.9664133,
+    "lng": -56.5447268
+  },
+  {
+    "name": "Altos",
+    "lat": -25.2617324,
+    "lng": -57.2492898
+  },
+  {
+    "name": "Arroyos y Esteros",
+    "lat": -25.0541561,
+    "lng": -57.0970807
+  },
+  {
+    "name": "Atyrá",
+    "lat": -25.2796362,
+    "lng": -57.1707831
+  },
+  {
+    "name": "Caacupé",
+    "lat": -25.3856888,
+    "lng": -57.140477
+  },
+  {
+    "name": "Caraguatay",
+    "lat": -25.2395075,
+    "lng": -56.8252913
+  },
+  {
+    "name": "Emboscada",
+    "lat": -25.1250628,
+    "lng": -57.349522
+  },
+  {
+    "name": "Eusebio Ayala",
+    "lat": -25.3826238,
+    "lng": -56.9622692
+  },
+  {
+    "name": "Isla Pucú",
+    "lat": -25.3084188,
+    "lng": -56.8994355
+  },
+  {
+    "name": "Itacurubí de la Cordillera",
+    "lat": -25.4631759,
+    "lng": -56.847988
+  },
+  {
+    "name": "Juan de Mena",
+    "lat": -24.954092,
+    "lng": -56.7627916
+  },
+  {
+    "name": "Loma Grande",
+    "lat": -25.1777335,
+    "lng": -57.2335766
+  },
+  {
+    "name": "Mbocayaty del Yhaguy",
+    "lat": -25.3418119,
+    "lng": -56.7263211
+  },
+  {
+    "name": "Nueva Colombia",
+    "lat": -25.1879075,
+    "lng": -57.305443
+  },
+  {
+    "name": "Piribebuy",
+    "lat": -25.4644144,
+    "lng": -57.0422264
+  },
+  {
+    "name": "Primero de Marzo",
+    "lat": -25.1530253,
+    "lng": -56.9280309
+  },
+  {
+    "name": "San Bernardino",
+    "lat": -25.3087796,
+    "lng": -57.2958319
+  },
+  {
+    "name": "San José Obrero",
+    "lat": -25.1771752,
+    "lng": -56.9142535
+  },
+  {
+    "name": "Santa Elena",
+    "lat": -25.4144566,
+    "lng": -56.797215
+  },
+  {
+    "name": "Tobatí",
+    "lat": -25.2602337,
+    "lng": -57.0824109
+  },
+  {
+    "name": "Valenzuela",
+    "lat": -25.5945371,
+    "lng": -56.8705538
+  },
+  {
+    "name": "Borja",
+    "lat": -25.9507222,
+    "lng": -56.4961614
+  },
+  {
+    "name": "Capitán Mauricio José Troche",
+    "lat": -25.6159267,
+    "lng": -56.2773937
+  },
+  {
+    "name": "Coronel Martínez",
+    "lat": -25.7592199,
+    "lng": -56.6192144
+  },
+  {
+    "name": "Doctor Botrell",
+    "lat": -25.6149241,
+    "lng": -56.3398852
+  },
+  {
+    "name": "Félix Pérez Cardozo",
+    "lat": -25.7428872,
+    "lng": -56.5227793
+  },
+  {
+    "name": "General Eugenio Alejandrino Garay",
+    "lat": -25.5646123,
+    "lng": -54.6020457
+  },
+  {
+    "name": "Independencia",
+    "lat": -25.7185,
+    "lng": -56.265
+  },
+  {
+    "name": "Itapé",
+    "lat": -25.8520504,
+    "lng": -56.6147051
+  },
+  {
+    "name": "Iturbe",
+    "lat": -26.0583952,
+    "lng": -56.4874273
+  },
+  {
+    "name": "José A. Fassardi",
+    "lat": -25.9795583,
+    "lng": -56.1217721
+  },
+  {
+    "name": "Mbocayaty del Guairá",
+    "lat": -25.7148266,
+    "lng": -56.4080301
+  },
+  {
+    "name": "Natalicio Talavera",
+    "lat": -25.6547363,
+    "lng": -56.3083909
+  },
+  {
+    "name": "Ñumí",
+    "lat": -25.9515067,
+    "lng": -56.3284544
+  },
+  {
+    "name": "Paso Yobái",
+    "lat": -25.7132848,
+    "lng": -56.0015539
+  },
+  {
+    "name": "San Salvador",
+    "lat": -25.9430646,
+    "lng": -56.4710195
+  },
+  {
+    "name": "Tebicuary",
+    "lat": -25.4673539,
+    "lng": -56.4517181
+  },
+  {
+    "name": "Villarrica",
+    "lat": -25.7809839,
+    "lng": -56.4478765
+  },
+  {
+    "name": "Yataity del Guairá",
+    "lat": -25.6891251,
+    "lng": -56.4668019
+  },
+  {
+    "name": "Alto Verá",
+    "lat": -26.7505755,
+    "lng": -55.7707137
+  },
+  {
+    "name": "Bella Vista",
+    "lat": -22.1231581,
+    "lng": -56.5133016
+  },
+  {
+    "name": "Cambyretá",
+    "lat": -27.3590548,
+    "lng": -55.7613673
+  },
+  {
+    "name": "Capitán Meza",
+    "lat": -26.9364706,
+    "lng": -55.23533
+  },
+  {
+    "name": "Capitán Miranda",
+    "lat": -27.2196484,
+    "lng": -55.8011417
+  },
+  {
+    "name": "Carlos Antonio López",
+    "lat": -26.3985002,
+    "lng": -54.7568241
+  },
+  {
+    "name": "Carmen del Paraná",
+    "lat": -27.2209064,
+    "lng": -56.1479269
+  },
+  {
+    "name": "Coronel José Félix Bogado",
+    "lat": -27.1605297,
+    "lng": -56.2414071
+  },
+  {
+    "name": "Edelira",
+    "lat": -27.310307,
+    "lng": -55.855905
+  },
+  {
+    "name": "Encarnación",
+    "lat": -27.3376114,
+    "lng": -55.8669492
+  },
+  {
+    "name": "Fram",
+    "lat": -27.0953017,
+    "lng": -56.0190012
+  },
+  {
+    "name": "General Artigas",
+    "lat": -26.9327817,
+    "lng": -56.2245027
+  },
+  {
+    "name": "General Delgado",
+    "lat": -27.0906714,
+    "lng": -56.5254794
+  },
+  {
+    "name": "Hohenau",
+    "lat": -27.0712879,
+    "lng": -55.639978
+  },
+  {
+    "name": "Itapúa Poty",
+    "lat": -26.6309512,
+    "lng": -55.5202183
+  },
+  {
+    "name": "Jesús de Tavarangüé",
+    "lat": -27.0557196,
+    "lng": -55.7412486
+  },
+  {
+    "name": "José Leandro Oviedo",
+    "lat": -26.7445942,
+    "lng": -56.279358
+  },
+  {
+    "name": "La Paz",
+    "lat": -26.9943634,
+    "lng": -55.8888571
+  },
+  {
+    "name": "Mayor Julio Dionisio Otaño",
+    "lat": -26.3534303,
+    "lng": -54.7215375
+  },
+  {
+    "name": "Natalio",
+    "lat": -26.7564696,
+    "lng": -55.1367139
+  },
+  {
+    "name": "Nueva Alborada",
+    "lat": -27.2696145,
+    "lng": -55.6796227
+  },
+  {
+    "name": "Obligado",
+    "lat": -27.0553072,
+    "lng": -55.6293459
+  },
+  {
+    "name": "Pirapó",
+    "lat": -26.8575086,
+    "lng": -55.5438375
+  },
+  {
+    "name": "San Cosme y Damián",
+    "lat": -27.3159514,
+    "lng": -56.3312694
+  },
+  {
+    "name": "San Juan del Paraná",
+    "lat": -27.3028924,
+    "lng": -55.9638696
+  },
+  {
+    "name": "San Pedro del Paraná",
+    "lat": -26.833795,
+    "lng": -56.2091439
+  },
+  {
+    "name": "San Rafael del Paraná",
+    "lat": -26.5942835,
+    "lng": -54.9963893
+  },
+  {
+    "name": "Tomás Romero Pereira",
+    "lat": -26.4640083,
+    "lng": -55.2758653
+  },
+  {
+    "name": "Trinidad",
+    "lat": -27.1288168,
+    "lng": -55.7043941
+  },
+  {
+    "name": "Yatytay",
+    "lat": -26.672829,
+    "lng": -55.0876912
+  },
+  {
+    "name": "Ayolas",
+    "lat": -27.3898739,
+    "lng": -56.844718
+  },
+  {
+    "name": "San Ignacio Guazú",
+    "lat": -26.9430371,
+    "lng": -57.1515708
+  },
+  {
+    "name": "San Juan Bautista",
+    "lat": -26.6690194,
+    "lng": -57.1455794
+  },
+  {
+    "name": "San Miguel",
+    "lat": -26.534595,
+    "lng": -57.038751
+  },
+  {
+    "name": "San Patricio",
+    "lat": -26.976687,
+    "lng": -56.8273098
+  },
+  {
+    "name": "Santa María de Fe",
+    "lat": -26.7249821,
+    "lng": -56.8904652
+  },
+  {
+    "name": "Santa Rosa de Lima",
+    "lat": -26.8864043,
+    "lng": -56.8492668
+  },
+  {
+    "name": "Santiago",
+    "lat": -27.1402177,
+    "lng": -56.7634235
+  },
+  {
+    "name": "Villa Florida",
+    "lat": -26.408432,
+    "lng": -57.1252096
+  },
+  {
+    "name": "Yabebyry",
+    "lat": -27.3792946,
+    "lng": -57.1653769
+  },
+  {
+    "name": "Alberdi",
+    "lat": -26.1854132,
+    "lng": -58.142486
+  },
+  {
+    "name": "Cerrito",
+    "lat": -27.3393701,
+    "lng": -57.6397704
+  },
+  {
+    "name": "Desmochados",
+    "lat": -27.121115,
+    "lng": -58.0879682
+  },
+  {
+    "name": "General José Eduvigis Díaz",
+    "lat": -27.2008608,
+    "lng": -58.3667298
+  },
+  {
+    "name": "Guazú Cuá",
+    "lat": -26.8826508,
+    "lng": -57.9659088
+  },
+  {
+    "name": "Humaitá",
+    "lat": -27.0693068,
+    "lng": -58.5074653
+  },
+  {
+    "name": "Isla Umbú",
+    "lat": -26.9834127,
+    "lng": -58.2725618
+  },
+  {
+    "name": "Laureles",
+    "lat": -27.2504746,
+    "lng": -57.4581675
+  },
+  {
+    "name": "Mayor José Martínez",
+    "lat": -25.2911696,
+    "lng": -57.6578953
+  },
+  {
+    "name": "Paso de Patria",
+    "lat": -27.2427455,
+    "lng": -58.5416961
+  },
+  {
+    "name": "Pilar",
+    "lat": -26.8582578,
+    "lng": -58.3034318
+  },
+  {
+    "name": "San Juan Bautista de Ñeembucú",
+    "lat": -26.6703689,
+    "lng": -57.9059277
+  },
+  {
+    "name": "Tacuaras",
+    "lat": -26.8183687,
+    "lng": -57.982401
+  },
+  {
+    "name": "Villa Franca",
+    "lat": -26.3148808,
+    "lng": -58.1479754
+  },
+  {
+    "name": "Villa Oliva",
+    "lat": -26.0161506,
+    "lng": -57.8575555
+  },
+  {
+    "name": "Villalbín",
+    "lat": -27.1386662,
+    "lng": -57.9302857
+  },
+  {
+    "name": "Acahay",
+    "lat": -25.9139897,
+    "lng": -57.1142066
+  },
+  {
+    "name": "Caapucú",
+    "lat": -26.2336162,
+    "lng": -57.1820645
+  },
+  {
+    "name": "Carapeguá",
+    "lat": -25.767636,
+    "lng": -57.2425331
+  },
+  {
+    "name": "Escobar",
+    "lat": -25.5124252,
+    "lng": -54.6248791
+  },
+  {
+    "name": "General Bernardino Caballero",
+    "lat": -25.3087796,
+    "lng": -57.2958319
+  },
+  {
+    "name": "La Colmena",
+    "lat": -25.8856298,
+    "lng": -56.8404292
+  },
+  {
+    "name": "María Antonia",
+    "lat": -26.4317721,
+    "lng": -56.9067727
+  },
+  {
+    "name": "Mbuyapey",
+    "lat": -26.2205658,
+    "lng": -56.7572497
+  },
+  {
+    "name": "Paraguarí",
+    "lat": -26.0,
+    "lng": -57.166667
+  },
+  {
+    "name": "Pirayú",
+    "lat": -25.4835339,
+    "lng": -57.2372304
+  },
+  {
+    "name": "Quiindy",
+    "lat": -25.9757816,
+    "lng": -57.2324307
+  },
+  {
+    "name": "Quyquyhó",
+    "lat": -26.2316581,
+    "lng": -56.9888688
+  },
+  {
+    "name": "San Roque González de Santa Cruz",
+    "lat": -25.9466327,
+    "lng": -56.2505903
+  },
+  {
+    "name": "Sapucai",
+    "lat": -25.6649017,
+    "lng": -56.955103
+  },
+  {
+    "name": "Tebicuarymí",
+    "lat": -25.9145843,
+    "lng": -56.6725878
+  },
+  {
+    "name": "Yaguarón",
+    "lat": -25.5630557,
+    "lng": -57.2856971
+  },
+  {
+    "name": "Ybycuí",
+    "lat": -26.0186949,
+    "lng": -57.0178207
+  },
+  {
+    "name": "Ybytymí",
+    "lat": -25.7605906,
+    "lng": -56.8036315
+  },
+  {
+    "name": "Benjamín Aceval",
+    "lat": -24.9947234,
+    "lng": -57.5524442
+  },
+  {
+    "name": "Campo Aceval",
+    "lat": -23.2010594,
+    "lng": -59.7669554
+  },
+  {
+    "name": "General José María Bruguez",
+    "lat": -24.2790289,
+    "lng": -58.9159844
+  },
+  {
+    "name": "José Falcón",
+    "lat": -25.215938,
+    "lng": -57.7130949
+  },
+  {
+    "name": "Nanawa",
+    "lat": -25.2803256,
+    "lng": -57.7029628
+  },
+  {
+    "name": "Nueva Asunción",
+    "lat": -25.2520156,
+    "lng": -57.6415393
+  },
+  {
+    "name": "Puerto Pinasco",
+    "lat": -22.6454007,
+    "lng": -57.8402156
+  },
+  {
+    "name": "Teniente Esteban Martínez",
+    "lat": -23.9712785,
+    "lng": -59.7561724
+  },
+  {
+    "name": "Teniente Primero Manuel Irala Fernández",
+    "lat": -22.3167,
+    "lng": -59.5833
+  },
+  {
+    "name": "Villa Hayes",
+    "lat": -25.0928654,
+    "lng": -57.5246478
+  },
+  {
+    "name": "Antequera",
+    "lat": -24.085699,
+    "lng": -57.2002552
+  },
+  {
+    "name": "Capiibary",
+    "lat": -24.8,
+    "lng": -56.0333
+  },
+  {
+    "name": "Choré",
+    "lat": -24.1858573,
+    "lng": -56.5832982
+  },
+  {
+    "name": "General Elizardo Aquino",
+    "lat": -24.4465037,
+    "lng": -56.8994063
+  },
+  {
+    "name": "General Isidoro Resquín",
+    "lat": -24.062548,
+    "lng": -56.4505601
+  },
+  {
+    "name": "Guayaibí",
+    "lat": -24.5276771,
+    "lng": -56.406702
+  },
+  {
+    "name": "Itacurubí del Rosario",
+    "lat": -24.5360385,
+    "lng": -56.8248844
+  },
+  {
+    "name": "Liberación",
+    "lat": -24.1921208,
+    "lng": -56.4349632
+  },
+  {
+    "name": "Lima",
+    "lat": -23.8807425,
+    "lng": -56.4824428
+  },
+  {
+    "name": "Nueva Germania",
+    "lat": -23.9121136,
+    "lng": -56.701067
+  },
+  {
+    "name": "San José del Rosario",
+    "lat": -24.2653144,
+    "lng": -56.9269104
+  },
+  {
+    "name": "San Estanislao",
+    "lat": -24.6657428,
+    "lng": -56.4416798
+  },
+  {
+    "name": "San Pablo",
+    "lat": -25.3248854,
+    "lng": -57.5767999
+  },
+  {
+    "name": "San Pedro de Ycuamandiyú",
+    "lat": -24.1,
+    "lng": -57.0833
+  },
+  {
+    "name": "San Vicente Pancholo",
+    "lat": -24.6366,
+    "lng": -55.3005
+  },
+  {
+    "name": "Santa Rosa del Aguaray",
+    "lat": -23.8259783,
+    "lng": -56.5207034
+  },
+  {
+    "name": "Tacuatí",
+    "lat": -23.4572643,
+    "lng": -56.7384496
+  },
+  {
+    "name": "Unión",
+    "lat": -24.8076366,
+    "lng": -56.5190779
+  },
+  {
+    "name": "Veinticinco de Diciembre",
+    "lat": -24.65,
+    "lng": -56.4833
+  },
+  {
+    "name": "Villa del Rosario",
+    "lat": -24.4233326,
+    "lng": -57.1129598
+  },
+  {
+    "name": "Yataity del Norte",
+    "lat": -24.8459312,
+    "lng": -56.3560445
+  },
+  {
+    "name": "Yrybucuá",
+    "lat": -24.479991,
+    "lng": -56.085646
+  }
+]

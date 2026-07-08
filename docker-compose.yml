@@ -1,0 +1,29 @@
+# Ejemplo con 2 shards (el setup actual). Para mas instancias, copia el
+# bloque de un servicio y cambia el numero de shard/DB.
+#
+# Uso:
+#   docker compose build
+#   docker compose up
+#
+# Cada servicio lee data/shards/shard_00X.jsonl (montado desde el host) y
+# escribe su propia DB en data/shard_00X.db - no pisan la DB principal.
+services:
+  scraper-1:
+    build: .
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    command: ["--tasks-file", "data/shards/shard_001.jsonl", "--db", "data/shard_001.db"]
+    restart: unless-stopped
+
+  scraper-2:
+    build: .
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    env_file:
+      - .env
+    command: ["--tasks-file", "data/shards/shard_002.jsonl", "--db", "data/shard_002.db"]
+    restart: unless-stopped
