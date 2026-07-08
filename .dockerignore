@@ -1,0 +1,39 @@
+# Datasets pesados de una sola vez (ETL de poblacion, no se necesitan para scrapear)
+pry_general_2020_csv/
+pry_general_2020_geotiff/
+
+# Datos generados/estado y secretos: se montan como volumen en runtime,
+# NO se hornean en la imagen. Los dos archivos chicos de referencia
+# (paraguay_cities.json, paraguay_boundary.geojson) SI quedan incluidos
+# porque no matchean ninguno de estos patrones.
+data/backup_*/
+data/debug_html/
+data/osm/
+data/shards/
+data/*.db
+data/*.jsonl
+data/debug_place.html
+data/output.json
+data/proxies.txt
+
+logs/
+
+# Python
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+
+# Tests y mocks de desarrollo (no se necesitan en runtime)
+tests/
+
+# Entorno local / editor
+.env
+.venv/
+venv/
+.vscode/
+.idea/
+
+# Control de versiones
+.git/
+.gitignore
