@@ -5,6 +5,8 @@
 test_mode: false
 headless: true
 workers: 2
+block_resources: true      # abortar imagenes/media/fonts en modo live (no toca CSS/JS/XHR)
+save_debug_html: false     # guardar HTML crudo por scrape en data/debug_html/ (diagnostico)
 
 # === Base de datos ===
 database:

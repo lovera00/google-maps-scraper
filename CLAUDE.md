@@ -39,8 +39,8 @@ python scripts/validate_categories.py --all --verbose  # Show per-result strateg
 # Maintenance scripts
 python scripts/repair_categories.py --limit 50         # Re-scrape 50 cells to fill missing categories
 python scripts/repair_categories.py --dry-run          # Preview without modifying DB
-python scripts/flush_clean_to_pg.py                    # Bulk INSERT categorized rows from SQLite to PG
-python scripts/flush_clean_to_pg.py --dry-run          # Preview category distribution only
+python scripts/flush_clean_to_pg.py                    # Curate categories, then bulk INSERT from SQLite to PG
+python scripts/flush_clean_to_pg.py --dry-run          # Preview curation coverage + category distribution
 ```
 
 ## Architecture
@@ -107,6 +107,31 @@ Tasks in JSONL are serialized as `QueryTask.to_dict()` with `grid_cell`, `catego
 Table `businesses`: `id, name, lat, lng, category, search_category, address, phone, website, rating, review_count, source_url, google_place_id, raw_name, metadata (JSON), created_at, updated_at, is_active`. Indexes on `name` (NOCASE), `(lat, lng)`, `category`, `source_url` (UNIQUE WHERE NOT NULL), `google_place_id` (UNIQUE WHERE NOT NULL).
 
 Table `scraping_tasks`: audit log with grid cell, category, depth, status, results count, timestamps. Supports pause/resume.
+
+## Category curation (PostgreSQL)
+
+The scraped `category` field is raw text from the Google Maps result card — often `"name 4.3 real category"` or `"name No hay opiniones real category"` concatenated. It is NEVER overwritten. Clean classification lives in separate columns, using a two-level taxonomy (186 fine types → 21 categories) adopted from the Place Analyzer report.
+
+PostgreSQL-only objects (not in SQLite):
+
+- `commerce_types (type PK, category)` — the taxonomy
+- `category_mappings (raw_norm PK, type FK nullable, category)` — ~640 curated mappings from normalized Google category text to a type (`type` is NULL for category-only mappings like "oficinas de empresa")
+- `norm_txt(text)` SQL function — `lower + unaccent + trim`; keys in `category_mappings` are stored normalized
+- Extra `businesses` columns: `google_category_raw` (tail extracted from the dirty text), `business_type`, `business_category`, `category_source`, `category_confidence`
+- Indexes on `business_category` and `business_type`
+
+**Classification cascade** (highest-confidence signal wins; each step only fills rows still NULL):
+
+| # | Source (`category_source`) | Signal | Confidence |
+|---|---|---|---|
+| 1 | `google_categoria` | regex-extracted tail after rating / "No hay opiniones" | 0.90 |
+| 2 | `categoria_original` | the whole `category` field was already clean | 0.85 |
+| 3 | `search_category` | scraping search term (sometimes lies — hence 0.60) | 0.60 |
+| 4 | `nombre` | word-boundary keyword (mapping keys ≥5 chars, longest wins) in `name` | 0.50 |
+
+Status suffixes (`cerrado`, `abierto`, `cierra pronto`, ...) are stripped before mapping lookup. The webapp reads `business_category`/`business_type`; unclassified rows surface as "Sin clasificar".
+
+**Repair → flush cycle**: `repair_categories.py` fixes empty/`'Sin categoria'` rows in SQLite by re-running completed searches from `scraping_tasks` with the current parser (~120 results per search, only fills missing — matches by `source_url` only). `flush_clean_to_pg.py` then pushes to PG: it first curates each row in Python (same cascade, reading `category_mappings` from PG — see `Curator` class), so rows are inserted with the clean columns already populated. `ON CONFLICT DO NOTHING` means existing PG rows are never touched; to re-classify existing rows, run the SQL cascade UPDATEs against `category_mappings` (idempotent — they only fill NULLs).
 
 ## Important patterns
 

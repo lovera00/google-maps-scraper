@@ -16,6 +16,14 @@ def main():
     parser.add_argument("--input", required=True, help="Archivo JSONL con todas las tareas")
     parser.add_argument("--shards", type=int, required=True, help="Numero de shards")
     parser.add_argument("--output-dir", default="data/shards", help="Directorio de salida")
+    parser.add_argument("--round-robin", action="store_true",
+                        help="(Obsoleto: ya es el comportamiento por defecto) Reparte "
+                             "intercalado tarea i -> shard i%%n.")
+    parser.add_argument("--sequential", action="store_true",
+                        help="Reparte en bloques contiguos (comportamiento viejo). El "
+                             "archivo viene ordenado urbano->rural, asi que esto concentra "
+                             "las zonas densas (mas lentas y con mas overflow) en el primer "
+                             "shard y desbalancea el run distribuido. NO recomendado.")
     args = parser.parse_args()
 
     input_path = Path(args.input)
@@ -39,20 +47,35 @@ def main():
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    base = total // n
-    extra = total % n
+    # Por defecto round-robin: como el JSONL viene ordenado por prioridad
+    # (urbano -> rural, ver QueryPlanner.generate_initial_tasks), repartir
+    # tarea i -> shard i%n produce un muestreo estratificado: cada shard recibe
+    # una mezcla pareja de zonas densas y vacias y todos tardan parecido.
+    # El modo contiguo (--sequential) concentraria todo lo urbano en el shard 1.
+    use_round_robin = not args.sequential
+    if use_round_robin:
+        shards = [[] for _ in range(n)]
+        for i, line in enumerate(lines):
+            shards[i % n].append(line)
+    else:
+        # bloques secuenciales (comportamiento original, desbalanceado)
+        base = total // n
+        extra = total % n
+        shards = []
+        start = 0
+        for i in range(n):
+            size = base + (1 if i < extra else 0)
+            shards.append(lines[start:start + size])
+            start += size
 
-    start = 0
-    for i in range(n):
-        size = base + (1 if i < extra else 0)
-        chunk = lines[start:start + size]
+    for i, chunk in enumerate(shards):
         shard_path = output_dir / f"shard_{i + 1:03d}.jsonl"
         with open(shard_path, "w", encoding="utf-8") as f:
             f.writelines(chunk)
         print(f"shard_{i + 1:03d}.jsonl: {len(chunk)} tareas ({100 * len(chunk) / total:.1f}%)")
-        start += size
 
-    print(f"\n{total} tareas divididas en {n} shards en {output_dir}")
+    modo = "round-robin (balanceado)" if use_round_robin else "secuencial (contiguo, desbalanceado)"
+    print(f"\n{total} tareas divididas en {n} shards ({modo}) en {output_dir}")
 
 
 if __name__ == "__main__":

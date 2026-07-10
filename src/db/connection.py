@@ -5,10 +5,11 @@ from pathlib import Path
 async def get_connection(db_path: str, wal_mode: bool = True) -> aiosqlite.Connection:
     path = Path(db_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    conn = await aiosqlite.connect(str(path))
+    conn = await aiosqlite.connect(str(path), timeout=30.0)
     conn.row_factory = aiosqlite.Row
     if wal_mode:
         await conn.execute("PRAGMA journal_mode=WAL")
+    await conn.execute("PRAGMA busy_timeout=30000")
     await conn.execute("PRAGMA foreign_keys=ON")
     return conn
 

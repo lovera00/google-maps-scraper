@@ -1,4 +1,5 @@
 import json
+import logging
 import aiosqlite
 from pathlib import Path
 from typing import List, Optional
@@ -6,104 +7,151 @@ from typing import List, Optional
 from ..models.business import NormalizedBusiness
 from ..utils.geo import haversine_distance
 
+logger = logging.getLogger(__name__)
+
+# Umbral de proximidad del tier-3 del upsert (mismo negocio con igual nombre).
+_PROXIMITY_MATCH_METERS = 100.0
+# Sobre-aproximacion en grados para el prefiltro bbox del tier-3. A la latitud
+# de Paraguay (~-25 deg) 100 m ~= 0.0009 deg tanto en lat como en lng, asi que
+# 0.0011 deg cubre el radio con margen; el haversine hace el corte exacto luego.
+# Sirve para que SQLite acote candidatos por indice y no compare todos los
+# homonimos del pais.
+_PROXIMITY_BBOX_DELTA_DEG = 0.0011
+
 
 class Repository:
     def __init__(self, db_path: str):
         self.db_path = db_path
 
+    async def _upsert_on_conn(self, db: aiosqlite.Connection,
+                              business: NormalizedBusiness) -> bool:
+        """Ejecuta un upsert de 3 niveles sobre una conexion ya abierta.
+
+        NO hace commit: el llamador controla la transaccion (una por batch).
+        Devuelve True si insertó una fila nueva, False si actualizó una existente.
+        """
+        match_id = None
+
+        # 1. Buscar por google_place_id (el ID canonico de Google Maps) -> indice unico
+        if business.google_place_id:
+            cursor = await db.execute(
+                "SELECT id FROM businesses WHERE google_place_id = ? AND is_active = 1",
+                (business.google_place_id,),
+            )
+            row = await cursor.fetchone()
+            if row:
+                match_id = row["id"]
+
+        # 2. Buscar por source_url completa -> indice unico
+        if match_id is None and business.source_url:
+            cursor = await db.execute(
+                "SELECT id FROM businesses WHERE source_url = ? AND is_active = 1",
+                (business.source_url,),
+            )
+            row = await cursor.fetchone()
+            if row:
+                match_id = row["id"]
+
+        # 3. Sino, buscar por nombre + proximidad.
+        #    `name = ? COLLATE NOCASE` usa idx_businesses_name (SEARCH por indice);
+        #    `LOWER(name) = LOWER(?)` NO podia usarlo y forzaba un full table scan
+        #    por cada insercion nueva. El bbox en lat/lng acota los candidatos antes
+        #    del haversine (que hace el corte exacto a <=100 m).
+        if match_id is None:
+            d = _PROXIMITY_BBOX_DELTA_DEG
+            cursor = await db.execute(
+                """SELECT id, lat, lng FROM businesses
+                   WHERE is_active = 1 AND name = ? COLLATE NOCASE
+                     AND lat BETWEEN ? AND ? AND lng BETWEEN ? AND ?
+                   ORDER BY id""",
+                (business.name,
+                 business.lat - d, business.lat + d,
+                 business.lng - d, business.lng + d),
+            )
+            rows = await cursor.fetchall()
+            for row in rows:
+                dist = haversine_distance(business.lat, business.lng, row["lat"], row["lng"])
+                if dist <= _PROXIMITY_MATCH_METERS:
+                    match_id = row["id"]
+                    break
+
+        if match_id is not None:
+            await db.execute(
+                """UPDATE businesses
+                   SET category = ?, search_category = ?, address = ?, phone = ?, website = ?,
+                       rating = ?, review_count = ?,
+                       source_url = COALESCE(?, source_url),
+                       google_place_id = COALESCE(?, google_place_id),
+                       metadata = ?, updated_at = datetime('now')
+                   WHERE id = ?""",
+                (
+                    business.category, business.search_category,
+                    business.address, business.phone,
+                    business.website, business.rating, business.review_count,
+                    business.source_url, business.google_place_id,
+                    json.dumps(business.metadata or {}),
+                    match_id,
+                ),
+            )
+            return False
+        else:
+            await db.execute(
+                """INSERT INTO businesses
+                   (name, lat, lng, category, search_category, address, phone, website,
+                    rating, review_count, source_url, google_place_id,
+                    raw_name, metadata)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    business.name, business.lat, business.lng,
+                    business.category, business.search_category,
+                    business.address, business.phone,
+                    business.website, business.rating, business.review_count,
+                    business.source_url, business.google_place_id,
+                    business.raw_name,
+                    json.dumps(business.metadata or {}),
+                ),
+            )
+            return True
+
     async def upsert_business(self, business: NormalizedBusiness) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        """Upsert de un solo negocio en su propia transaccion (uso puntual)."""
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
             db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA journal_mode=WAL")
-
-            match_id = None
-
-            # 1. Buscar por google_place_id (el ID canonico de Google Maps)
-            if business.google_place_id:
-                cursor = await db.execute(
-                    "SELECT id FROM businesses WHERE google_place_id = ? AND is_active = 1",
-                    (business.google_place_id,),
-                )
-                row = await cursor.fetchone()
-                if row:
-                    match_id = row["id"]
-
-            # 2. Buscar por source_url completa
-            if match_id is None and business.source_url:
-                cursor = await db.execute(
-                    "SELECT id FROM businesses WHERE source_url = ? AND is_active = 1",
-                    (business.source_url,),
-                )
-                row = await cursor.fetchone()
-                if row:
-                    match_id = row["id"]
-
-            # 3. Sino, buscar por nombre + proximidad
-            if match_id is None:
-                cursor = await db.execute(
-                    """SELECT id, lat, lng FROM businesses
-                       WHERE is_active = 1 AND LOWER(name) = LOWER(?)
-                       ORDER BY id""",
-                    (business.name,),
-                )
-                rows = await cursor.fetchall()
-                for row in rows:
-                    dist = haversine_distance(business.lat, business.lng, row["lat"], row["lng"])
-                    if dist <= 100:
-                        match_id = row["id"]
-                        break
-
-            if match_id is not None:
-                await db.execute(
-                    """UPDATE businesses
-                       SET category = ?, search_category = ?, address = ?, phone = ?, website = ?,
-                           rating = ?, review_count = ?,
-                           source_url = COALESCE(?, source_url),
-                           google_place_id = COALESCE(?, google_place_id),
-                           metadata = ?, updated_at = datetime('now')
-                       WHERE id = ?""",
-                    (
-                        business.category, business.search_category,
-                        business.address, business.phone,
-                        business.website, business.rating, business.review_count,
-                        business.source_url, business.google_place_id,
-                        json.dumps(business.metadata or {}),
-                        match_id,
-                    ),
-                )
-                await db.commit()
-                return False
-            else:
-                await db.execute(
-                    """INSERT INTO businesses
-                       (name, lat, lng, category, search_category, address, phone, website,
-                        rating, review_count, source_url, google_place_id,
-                        raw_name, metadata)
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (
-                        business.name, business.lat, business.lng,
-                        business.category, business.search_category,
-                        business.address, business.phone,
-                        business.website, business.rating, business.review_count,
-                        business.source_url, business.google_place_id,
-                        business.raw_name,
-                        json.dumps(business.metadata or {}),
-                    ),
-                )
-                await db.commit()
-                return True
+            is_new = await self._upsert_on_conn(db, business)
+            await db.commit()
+            return is_new
 
     async def insert_batch(self, businesses: List[NormalizedBusiness]) -> int:
+        """Upsert de un batch entero en UNA sola conexion y UN solo commit.
+
+        Antes se abria una conexion nueva + commit por cada fila. Dentro de la
+        misma transaccion los tiers 1/2 (google_place_id/source_url) ven las
+        filas ya insertadas en este mismo batch (aun sin commitear), asi que los
+        duplicados intra-batch se resuelven como UPDATE y no violan los indices
+        unicos.
+        """
+        if not businesses:
+            return 0
         inserted = 0
-        for b in businesses:
-            is_new = await self.upsert_business(b)
-            if is_new:
-                inserted += 1
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
+            db.row_factory = aiosqlite.Row
+            await db.execute("PRAGMA journal_mode=WAL")
+            for b in businesses:
+                try:
+                    if await self._upsert_on_conn(db, b):
+                        inserted += 1
+                except Exception as e:
+                    # Una fila problematica no debe abortar el batch entero ni
+                    # tumbar Storage. Se saltea y se sigue (la celda se reintenta
+                    # en el proximo run via resume si hiciera falta).
+                    logger.warning(f"Upsert fallido para '{getattr(b, 'name', '?')}': {e}")
+            await db.commit()
         return inserted
 
     async def exists_similar(self, name: str, lat: float, lng: float,
                              threshold_m: float = 50.0) -> bool:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 """SELECT 1 FROM businesses WHERE is_active = 1 AND LOWER(name) = LOWER(?) LIMIT 1""",
@@ -114,13 +162,13 @@ class Repository:
             return False
 
     async def count_businesses(self) -> int:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
             cursor = await db.execute("SELECT COUNT(*) FROM businesses WHERE is_active = 1")
             row = await cursor.fetchone()
             return row[0] if row else 0
 
     async def export_json(self, output_path: str) -> int:
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 "SELECT name, lat, lng, category FROM businesses WHERE is_active = 1"
@@ -135,7 +183,7 @@ class Repository:
 
     async def upsert_task_pending(self, grid_cell_json: str, category: str, depth: int) -> None:
         """Registra una tarea como pendiente (idempotente, para overflow)."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
             await db.execute("PRAGMA journal_mode=WAL")
             await db.execute(
                 """INSERT OR IGNORE INTO scraping_tasks
@@ -147,7 +195,7 @@ class Repository:
 
     async def mark_task_in_progress(self, grid_cell_json: str, category: str, depth: int) -> None:
         """Marca una tarea como en progreso (al hacer dequeue)."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
             await db.execute("PRAGMA journal_mode=WAL")
             await db.execute(
                 """INSERT INTO scraping_tasks (grid_cell_json, category, depth, status, started_at)
@@ -161,7 +209,7 @@ class Repository:
     async def mark_task_completed(self, grid_cell_json: str, category: str, depth: int,
                                   results_count: int) -> None:
         """Marca una tarea como completada."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
             await db.execute("PRAGMA journal_mode=WAL")
             await db.execute(
                 """INSERT INTO scraping_tasks
@@ -177,7 +225,7 @@ class Repository:
     async def mark_task_failed(self, grid_cell_json: str, category: str, depth: int,
                                error_message: str) -> None:
         """Marca una tarea como fallida e incrementa retry_count."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
             await db.execute("PRAGMA journal_mode=WAL")
             await db.execute(
                 """INSERT INTO scraping_tasks
@@ -193,7 +241,7 @@ class Repository:
 
     async def get_completed_task_keys(self) -> set:
         """Devuelve el conjunto de (grid_cell_json, category, depth) completados."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
             cursor = await db.execute(
                 "SELECT grid_cell_json, category, depth FROM scraping_tasks WHERE status='completed'"
             )
@@ -202,7 +250,7 @@ class Repository:
 
     async def get_pending_or_in_progress_tasks(self) -> list[dict]:
         """Devuelve tareas interrumpidas (pending o in_progress) para re-encolar."""
-        async with aiosqlite.connect(self.db_path) as db:
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
             db.row_factory = aiosqlite.Row
             cursor = await db.execute(
                 """SELECT grid_cell_json, category, depth

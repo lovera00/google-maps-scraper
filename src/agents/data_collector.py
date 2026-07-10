@@ -30,6 +30,14 @@ class GoogleMapsBlockedError(Exception):
 
 
 class DataCollector:
+    # Cap de resultados de Google Maps por busqueda. Al alcanzarlo no tiene
+    # sentido seguir scrolleando (el orquestador lo usa como umbral de overflow).
+    RESULTS_CAP = 120
+    # Tipos de recurso que se abortan cuando block_resources esta activo. Se
+    # dejan pasar document/script/stylesheet/xhr/fetch: el feed carga por XHR y
+    # los checks de visibilidad dependen del layout (CSS).
+    _BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "imageset"}
+
     def __init__(self, config):
         self.config = config
         self.test_mode = config.test_mode
@@ -38,6 +46,8 @@ class DataCollector:
         self.simulate_delay = config.mock.simulate_delay
         self.mock_delay = config.mock.mock_delay_seconds
         self.max_scrolls = config.rate_limit.max_scroll_iterations
+        self.block_resources = getattr(config, "block_resources", True)
+        self.save_debug_html = getattr(config, "save_debug_html", False)
         self.rate_limiter = RateLimiter(
             config.rate_limit.request_delay_seconds,
             min_delay=config.rate_limit.request_delay_min_seconds,
@@ -218,6 +228,10 @@ class DataCollector:
             locale="es-PY",
             timezone_id="America/Asuncion",
         )
+        if self.block_resources:
+            # Abortar imagenes/media/fonts antes de navegar: ~50-70% menos de
+            # descarga y CPU por pagina, sin afectar el feed (carga por XHR).
+            await context.route("**/*", self._route_blocker)
         page = await context.new_page()
 
         try:
@@ -226,18 +240,30 @@ class DataCollector:
                 raise GoogleMapsBlockedError(
                     f"Google Maps respondio HTTP {response.status} (esperado 200) para {url}"
                 )
-            await asyncio.sleep(random.uniform(2, 4))
 
-            # Manejar popup de consentimiento
+            # Manejar popup de consentimiento (best-effort, corto)
             await self._dismiss_consent(page)
+
+            # Esperar a que aparezca el feed en vez de dormir un tiempo fijo.
+            # Si no aparece (busqueda sin resultados o pagina de lugar unico),
+            # seguimos igual: _parse_results devolvera [].
+            try:
+                await page.wait_for_selector(
+                    SELECTORS["results_container"][0], timeout=8000
+                )
+            except Exception:
+                pass
+            # Jitter humano corto (no un sleep fijo de 2-4 s)
+            await asyncio.sleep(random.uniform(0.4, 1.0))
 
             # Scroll para cargar todos los resultados
             await self._scroll_results(page)
 
             html = await page.content()
 
-            # Diagnostico: guardar HTML para inspeccionar estructura
-            self._save_debug_html(html, task)
+            # Diagnostico opcional: guardar HTML para inspeccionar selectores
+            if self.save_debug_html:
+                self._save_debug_html(html, task)
 
             soup = BeautifulSoup(html, "lxml")
             return self._parse_results(soup)
@@ -258,30 +284,57 @@ class DataCollector:
         finally:
             await context.close()
 
+    async def _route_blocker(self, route):
+        """Aborta recursos pesados (imagenes/media/fonts), deja pasar el resto."""
+        try:
+            if route.request.resource_type in self._BLOCKED_RESOURCE_TYPES:
+                await route.abort()
+            else:
+                await route.continue_()
+        except Exception:
+            # Si la ruta ya fue manejada/cerrada, no romper el scrape
+            try:
+                await route.continue_()
+            except Exception:
+                pass
+
     async def _dismiss_consent(self, page):
         for sel in SELECTORS["consent_button"]:
             try:
                 btn = page.locator(sel).first
-                if await btn.is_visible(timeout=2000):
+                # Timeout corto: en es-PY el popup casi nunca aparece; no quemar
+                # 2 s por selector esperandolo.
+                if await btn.is_visible(timeout=800):
                     await btn.click()
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(random.uniform(0.4, 0.8))
                     return
             except Exception:
                 pass
 
     async def _scroll_results(self, page):
+        cards_sel = SELECTORS["result_cards"][0]
         for i in range(self.max_scrolls):
-            prev_count = await page.locator(SELECTORS["result_cards"][0]).count()
+            prev_count = await page.locator(cards_sel).count()
+            # Al alcanzar el cap de Google no hay mas resultados que cargar.
+            if prev_count >= self.RESULTS_CAP:
+                break
             try:
                 feed = page.locator(SELECTORS["results_container"][0])
                 if await feed.is_visible():
                     await feed.evaluate("el => el.scrollTop = el.scrollHeight")
             except Exception:
                 pass
-            await asyncio.sleep(random.uniform(1.5, 2.5))
-            curr_count = await page.locator(SELECTORS["result_cards"][0]).count()
+            # Espera corta con jitter en vez del sleep fijo de 1.5-2.5 s.
+            await asyncio.sleep(random.uniform(0.6, 1.1))
+            curr_count = await page.locator(cards_sel).count()
             if curr_count == prev_count:
-                break
+                # Confirmar con un segundo chequeo corto: al acortar la espera,
+                # un lazy-load lento podria no haber cargado todavia y no
+                # queremos cortar antes de tiempo (evita perder resultados).
+                await asyncio.sleep(random.uniform(0.6, 1.0))
+                curr_count = await page.locator(cards_sel).count()
+                if curr_count == prev_count:
+                    break
 
     # ── Diagnostic ─────────────────────────────────────────────
 

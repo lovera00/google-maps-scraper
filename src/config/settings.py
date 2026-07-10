@@ -89,6 +89,12 @@ class Settings(BaseModel):
     test_mode: bool = False
     headless: bool = True
     workers: int = 2
+    # Bloquear descarga de imagenes/media/fonts en modo live (ahorra ancho de
+    # banda y tiempo; NO bloquea CSS/JS/XHR de los que depende el feed).
+    block_resources: bool = True
+    # Guardar el HTML crudo de cada scrape live en data/debug_html/ (diagnostico
+    # de selectores). Escribe MBs sync por tarea en el event loop: default off.
+    save_debug_html: bool = False
     database: DatabaseConfig = DatabaseConfig()
     postgres: PostgresConfig = PostgresConfig()
     grid: GridConfig

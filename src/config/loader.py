@@ -5,9 +5,8 @@ from pathlib import Path
 from .settings import Settings
 
 
-def _load_dotenv():
+def _load_dotenv(env_path: Path = Path(".env")):
     """Load .env file into os.environ. No external deps needed."""
-    env_path = Path(".env")
     if not env_path.exists():
         return
     for line in env_path.read_text(encoding="utf-8").splitlines():

@@ -41,7 +41,8 @@ def get_pool() -> asyncpg.Pool:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global _pool
-    _load_dotenv()
+    # .env del proyecto, independiente del directorio de trabajo
+    _load_dotenv(Path(__file__).parent.parent / ".env")
     dsn = os.environ.get("PG_DSN", "")
     if not dsn:
         print("ADVERTENCIA: PG_DSN no configurado. La API no funcionara sin BD.")
@@ -121,7 +122,8 @@ async def stats(
 
         by_cat = await conn.fetch(
             """
-            SELECT category, COUNT(*) AS count
+            SELECT COALESCE(business_category, 'Sin clasificar') AS category,
+                   COUNT(*) AS count
             FROM businesses
             WHERE is_active = TRUE
               AND geom IS NOT NULL
@@ -130,15 +132,38 @@ async def stats(
                   ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
                   $3
               )
-            GROUP BY category
+            GROUP BY 1
             ORDER BY count DESC
+            """,
+            lng, lat, radius_m,
+        )
+
+        by_type = await conn.fetch(
+            """
+            SELECT business_type AS type,
+                   business_category AS category,
+                   COUNT(*) AS count
+            FROM businesses
+            WHERE is_active = TRUE
+              AND geom IS NOT NULL
+              AND business_type IS NOT NULL
+              AND ST_DWithin(
+                  geom,
+                  ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
+                  $3
+              )
+            GROUP BY 1, 2
+            ORDER BY count DESC
+            LIMIT 15
             """,
             lng, lat, radius_m,
         )
 
         biz_list = await conn.fetch(
             """
-            SELECT name, lat, lng, category
+            SELECT name, lat, lng,
+                   business_type AS type,
+                   COALESCE(business_category, 'Sin clasificar') AS category
             FROM businesses
             WHERE is_active = TRUE
               AND geom IS NOT NULL
@@ -148,7 +173,7 @@ async def stats(
                   $3
               )
             ORDER BY name
-            LIMIT 2000
+            LIMIT 20000
             """,
             lng, lat, radius_m,
         )
@@ -157,6 +182,10 @@ async def stats(
     businesses_total = biz_total["total"] if biz_total else 0
 
     by_category = {row["category"]: row["count"] for row in by_cat}
+    top_types = [
+        {"type": r["type"], "category": r["category"], "count": r["count"]}
+        for r in by_type
+    ]
 
     businesses_per_1000 = 0.0
     if population > 0:
@@ -169,11 +198,13 @@ async def stats(
         "businesses_total": businesses_total,
         "businesses_per_1000": businesses_per_1000,
         "by_category": by_category,
+        "top_types": top_types,
         "businesses": [
             {
                 "name": r["name"],
                 "lat": r["lat"],
                 "lng": r["lng"],
+                "type": r["type"],
                 "category": r["category"],
             }
             for r in biz_list

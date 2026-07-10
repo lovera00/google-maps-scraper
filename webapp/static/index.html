@@ -66,10 +66,10 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
     </div>
 
     <div class="panel-section">
-        <label>Radio: <span id="radiusDisplay">5.0</span> km</label>
+        <label>Radio: <span id="radiusDisplay">1.0</span> km</label>
         <div class="slider-row">
-            <input type="range" id="radiusSlider" min="0.5" max="50" step="0.1" value="5">
-            <span class="radius-val" id="radiusVal">5.0 km</span>
+            <input type="range" id="radiusSlider" min="0.5" max="50" step="0.1" value="1">
+            <span class="radius-val" id="radiusVal">1.0 km</span>
         </div>
     </div>
 
@@ -141,13 +141,53 @@ body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }
     </div>
 
     <div class="panel-section" id="categoriesSection" style="display:none">
-        <label>Por actividad comercial (top 10)</label>
+        <label>Por categoría</label>
         <table class="cat-table" id="catTable"></table>
+    </div>
+
+    <div class="panel-section" id="typesSection" style="display:none">
+        <label>Top rubros</label>
+        <table class="cat-table" id="typeTable"></table>
     </div>
 </div>
 
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 <script>
+// ── Colores por categoría ─────────────────────────────────────────
+var CAT_COLORS = {
+    'Alimenticio': '#e74c3c',
+    'Comercial': '#3498db',
+    'Automotor': '#34495e',
+    'Salud': '#2ecc71',
+    'Servicios varios': '#95a5a6',
+    'Inmobiliario': '#8e44ad',
+    'Estética': '#fd79a8',
+    'Hogar': '#e67e22',
+    'Turismo': '#1abc9c',
+    'Vestimenta': '#9b59b6',
+    'Educación': '#f1c40f',
+    'Esparcimiento': '#16a085',
+    'Deportes': '#27ae60',
+    'Tecnología': '#2980b9',
+    'Religión': '#7f8c8d',
+    'Industrial': '#d35400',
+    'Publicidad': '#c0392b',
+    'Construcción': '#f39c12',
+    'Entidades financieras': '#0e6655',
+    'Entes públicos': '#5d6d7e',
+    'Agroganadero': '#7d6608',
+    'Sin clasificar': '#bdc3c7',
+};
+
+function catColor(cat) {
+    return CAT_COLORS[cat] || '#bdc3c7';
+}
+
+function catDot(cat) {
+    return '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;'
+        + 'background:' + catColor(cat) + ';margin-right:6px;vertical-align:middle"></span>';
+}
+
 // ── Mapa ──────────────────────────────────────────────────────────
 var map = L.map('map').setView([-23.4, -58.4], 7);
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -160,7 +200,7 @@ var circle = null;
 var bizMarkers = L.layerGroup().addTo(map);
 var currentLat = -25.282;
 var currentLng = -57.635;
-var currentRadius = 5.0;
+var currentRadius = 1.0;
 var debounceTimer = null;
 
 // Marcador inicial
@@ -241,30 +281,48 @@ async function fetchStats() {
         var data = await resp.json();
 
         // Stats
-        document.getElementById('popVal').textContent = data.population.toLocaleString('es-PY');
+        document.getElementById('popVal').textContent = Math.round(data.population).toLocaleString('es-PY');
         document.getElementById('bizVal').textContent = data.businesses_total.toLocaleString('es-PY');
-        document.getElementById('ratioVal').textContent = data.businesses_per_1000.toFixed(2);
+        document.getElementById('ratioVal').textContent = Math.round(data.businesses_per_1000).toLocaleString('es-PY');
         grid.style.display = 'grid';
 
-        // Tabla de actividad comercial (top 10)
+        // Tabla por categoría (taxonomía limpia, máx. 21 + Sin clasificar)
         var cats = Object.entries(data.by_category)
             .filter(function(entry) { return entry[0] && entry[0] !== 'null'; })
-            .sort(function(a, b) { return b[1] - a[1]; })
-            .slice(0, 10);
+            .sort(function(a, b) { return b[1] - a[1]; });
         if (cats.length > 0) {
             catSec.style.display = 'block';
             var tbody = cats.map(function(entry) {
                 var pct = data.businesses_total > 0
                     ? (entry[1] / data.businesses_total * 100).toFixed(1)
                     : '0.0';
-                return '<tr><td>' + escHtml(entry[0]) + '</td>'
+                return '<tr><td>' + catDot(entry[0]) + escHtml(entry[0]) + '</td>'
                     + '<td class="cat-count">' + entry[1].toLocaleString('es-PY') + '</td>'
                     + '<td class="cat-pct">' + pct + '%</td></tr>';
             }).join('');
             document.getElementById('catTable').innerHTML =
-                '<tr><th>Actividad comercial</th><th class="cat-count">Cant.</th><th class="cat-pct">%</th></tr>' + tbody;
+                '<tr><th>Categoría</th><th class="cat-count">Cant.</th><th class="cat-pct">%</th></tr>' + tbody;
         } else {
             catSec.style.display = 'none';
+        }
+
+        // Tabla de top rubros (tipo fino)
+        var typeSec = document.getElementById('typesSection');
+        var types = data.top_types || [];
+        if (types.length > 0) {
+            typeSec.style.display = 'block';
+            var trows = types.map(function(t) {
+                var pct = data.businesses_total > 0
+                    ? (t.count / data.businesses_total * 100).toFixed(1)
+                    : '0.0';
+                return '<tr><td>' + catDot(t.category) + escHtml(t.type) + '</td>'
+                    + '<td class="cat-count">' + t.count.toLocaleString('es-PY') + '</td>'
+                    + '<td class="cat-pct">' + pct + '%</td></tr>';
+            }).join('');
+            document.getElementById('typeTable').innerHTML =
+                '<tr><th>Rubro</th><th class="cat-count">Cant.</th><th class="cat-pct">%</th></tr>' + trows;
+        } else {
+            typeSec.style.display = 'none';
         }
 
         // Limpiar y pintar comercios
@@ -272,13 +330,17 @@ async function fetchStats() {
         var businesses = data.businesses || [];
         for (var i = 0; i < businesses.length; i++) {
             var b = businesses[i];
+            var color = catColor(b.category);
+            var tip = '<b>' + escHtml(b.name) + '</b><br>'
+                + (b.type ? escHtml(b.type) + ' · ' : '')
+                + escHtml(b.category);
             var m = L.circleMarker([b.lat, b.lng], {
                 radius: 4,
-                color: '#4a90d9',
-                fillColor: '#4a90d9',
-                fillOpacity: 0.6,
+                color: color,
+                fillColor: color,
+                fillOpacity: 0.7,
                 weight: 1,
-            }).bindTooltip('<b>' + escHtml(b.name) + '</b><br>' + escHtml(b.category), {
+            }).bindTooltip(tip, {
                 direction: 'top',
                 offset: [0, -6],
             });
@@ -290,6 +352,7 @@ async function fetchStats() {
         err.style.display = 'block';
         grid.style.display = 'none';
         catSec.style.display = 'none';
+        document.getElementById('typesSection').style.display = 'none';
     } finally {
         spinner.classList.remove('active');
     }
