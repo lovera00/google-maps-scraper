@@ -115,6 +115,8 @@ class DataCollector:
         # la vez; los demas detectan el cambio de generacion y no re-relanzan.
         self._browser_lock = asyncio.Lock()
         self._browser_generation = 0
+        # Referencia opcional al notificador Telegram (lo setea el orquestador)
+        self.telegram = None
         # Reciclado periodico del browser para liberar la memoria que Playwright
         # retiene del lado Python. _in_flight = scrapes con context abierto ahora;
         # el reciclado espera a que llegue a 0 (compuerta) antes de cerrar el
@@ -189,6 +191,13 @@ class DataCollector:
                             f"Navegador desconectado (intento {attempt + 1}/{max_retries}), "
                             f"reiniciando en {delay}s... ({e})"
                         )
+                        if self.telegram:
+                            asyncio.create_task(self.telegram.notify_browser_crash(
+                                attempt=attempt + 1,
+                                max_retries=max_retries,
+                                task=task,
+                                recovered=True,
+                            ))
                         await asyncio.sleep(delay)
                         # Relanzar el browser compartido de forma coordinada:
                         # si otro worker ya lo relanzo, este no lo vuelve a hacer.
@@ -198,6 +207,13 @@ class DataCollector:
                             f"Navegador desconectado tras {max_retries} reintentos. "
                             f"Abortando tarea: {task.category} @ {task.center_lat:.4f},{task.center_lng:.4f}"
                         )
+                        if self.telegram:
+                            asyncio.create_task(self.telegram.notify_browser_crash(
+                                attempt=max_retries + 1,
+                                max_retries=max_retries,
+                                task=task,
+                                recovered=False,
+                            ))
                         results = []
                         break
                     else:

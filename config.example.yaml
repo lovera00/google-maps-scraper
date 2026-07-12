@@ -350,6 +350,15 @@ osm:
   cerca_agua_threshold_m: 400.0
   h3_resolution: 9
 
+# === Telegram (notificaciones de error) ===
+telegram:
+  enabled: false
+  bot_token: "${TELEGRAM_BOT_TOKEN}"
+  chat_id: "${TELEGRAM_CHAT_ID}"
+  min_level: "warning"
+  notify_on_start: true
+  notify_on_complete: true
+
 # === Ciudades prioritarias ===
 priority_cities:
   - name: "Asuncion"

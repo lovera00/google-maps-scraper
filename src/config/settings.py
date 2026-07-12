@@ -82,6 +82,15 @@ class MockConfig(BaseModel):
     mock_delay_seconds: float = 0.3
 
 
+class TelegramConfig(BaseModel):
+    enabled: bool = False
+    bot_token: str = ""
+    chat_id: str = ""
+    min_level: str = "warning"
+    notify_on_start: bool = True
+    notify_on_complete: bool = True
+
+
 class PriorityCity(BaseModel):
     name: str
     lat: float
@@ -125,6 +134,7 @@ class Settings(BaseModel):
     logging: LoggingConfig = LoggingConfig()
     mock: MockConfig = MockConfig()
     priority_cities: List[PriorityCity] = []
+    telegram: TelegramConfig = TelegramConfig()
     osm: OsmConfig = OsmConfig()
 
     def model_post_init(self, _ctx):
@@ -133,3 +143,9 @@ class Settings(BaseModel):
         if env_dsn:
             self.postgres.dsn = env_dsn
             self.postgres.enabled = True
+        env_tg_token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+        if env_tg_token:
+            self.telegram.bot_token = env_tg_token
+        env_tg_chat = os.environ.get("TELEGRAM_CHAT_ID", "")
+        if env_tg_chat:
+            self.telegram.chat_id = env_tg_chat

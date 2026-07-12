@@ -17,6 +17,7 @@ from pathlib import Path
 from .config.loader import load_config
 from .config.settings import Settings
 from .utils.logging_config import setup_logging
+from .notifiers.telegram import TelegramNotifier
 from .agents.query_planner import QueryPlanner
 from .agents.data_collector import (
     DataCollector,
@@ -91,6 +92,17 @@ class Orchestrator:
         self.task_queue_high_water = getattr(self.config, "task_queue_high_water", 5000)
         self._producer_done = False
 
+        # Notificador Telegram
+        tg = self.config.telegram
+        self.telegram = TelegramNotifier(
+            bot_token=tg.bot_token,
+            chat_id=tg.chat_id,
+            min_level=tg.min_level,
+            notify_on_start=tg.notify_on_start,
+            notify_on_complete=tg.notify_on_complete,
+        )
+        self.collector.telegram = self.telegram if tg.enabled else None
+
         # Estadisticas
         self.stats = ScrapingStats()
 
@@ -142,6 +154,15 @@ class Orchestrator:
         """Callback sincrono para Ctrl+C / SIGTERM. Corta el proceso ya mismo,
         sin drenar colas ni hacer flush."""
         self._abort_immediately("interrupcion del usuario (Ctrl+C / SIGTERM)")
+
+    async def _async_abort(self, reason: str):
+        """Version async que notifica antes de abortar (usar desde workers)."""
+        if self.telegram.enabled:
+            try:
+                await asyncio.wait_for(self.telegram.notify_abort(reason), timeout=5.0)
+            except Exception:
+                pass
+        self._abort_immediately(reason)
 
     def _abort_immediately(self, reason: str):
         """Corte duro e inmediato: nada de drenar colas, nada de flush.
@@ -215,6 +236,14 @@ class Orchestrator:
 
         await self.collector.setup()
 
+        if self.telegram.enabled:
+            config_summary = (
+                f"{self.num_workers} workers | "
+                f"{len(self.config.categories)} categorias | "
+                f"grid {self.config.grid.initial_size_km}km"
+            )
+            asyncio.create_task(self.telegram.notify_pipeline_start(config_summary))
+
         logger.info(f"Lanzando {self.num_workers} workers de scraping concurrentes")
         try:
             await asyncio.gather(
@@ -228,9 +257,22 @@ class Orchestrator:
             logger.warning("Pipeline cancelado, drenando colas...")
         except Exception as e:
             logger.error(f"Error fatal en el pipeline: {e}", exc_info=True)
+            if self.telegram.enabled:
+                asyncio.create_task(self.telegram.notify_fatal_error(str(e)[:300]))
         finally:
             await self.collector.teardown()
             await self._drain_and_flush()
+            if self.telegram.enabled:
+                elapsed = time.monotonic() - self.stats.start_time
+                stats_summary = (
+                    f"{self.stats.total_scraped} scrapeados | "
+                    f"{self.stats.total_stored} almacenados | "
+                    f"{self.stats.overflow_events} overflows | "
+                    f"{int(elapsed // 3600)}h {int((elapsed % 3600) // 60)}m"
+                )
+                await self.telegram.notify_pipeline_end(stats_summary)
+            if self.telegram.enabled:
+                await self.telegram.close()
 
         count = await self.storage.count()
         logger.info(f"=== Pipeline completado. {count} negocios en BD. ===")
@@ -315,6 +357,8 @@ class Orchestrator:
                     self.stats.overflow_events += 1
                     logger.info(f"Overflow: {result_count} resultados en celda, "
                                 f"{len(new_tasks)} sub-tareas creadas (depth={task.depth})")
+                    if not new_tasks and self.telegram.enabled:
+                        asyncio.create_task(self.telegram.notify_overflow_max_depth(task))
 
                 for rb in raw_businesses:
                     await self.raw_queue.put(rb)
@@ -327,11 +371,24 @@ class Orchestrator:
 
             except GoogleMapsBlockedError as e:
                 logger.error(f"Google Maps bloqueado: {e}")
+                # Notificar bloqueo antes de la pausa
+                if self.telegram.enabled:
+                    delay = min(
+                        self.config.rate_limit.block_backoff_base_seconds *
+                        (2 ** (self.collector._consecutive_blocks)),
+                        self.config.rate_limit.block_backoff_max_seconds
+                    )
+                    asyncio.create_task(self.telegram.notify_block(
+                        consecutive=self.collector._consecutive_blocks + 1,
+                        max_consecutive=self.collector.max_consecutive_blocks,
+                        delay_seconds=delay,
+                        task=task,
+                    ))
                 # Pausa global con backoff escalante en vez de abortar de una.
                 should_retry = await self.collector.handle_block()
                 if not should_retry:
                     await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
-                    self._abort_immediately(
+                    await self._async_abort(
                         f"Google Maps sigue bloqueando tras "
                         f"{self.collector.max_consecutive_blocks} pausas con backoff ({e})"
                     )
@@ -346,6 +403,10 @@ class Orchestrator:
                         f"Fallo transitorio (retry {task.retry_count}/"
                         f"{self.max_task_retries}), re-encolando: {e}"
                     )
+                    if self.telegram.enabled:
+                        asyncio.create_task(self.telegram.notify_transient_retry(
+                            task, task.retry_count, self.max_task_retries, str(e)
+                        ))
                 else:
                     await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
                     logger.error(
@@ -353,9 +414,17 @@ class Orchestrator:
                         f"marcando failed: {task.category} @ "
                         f"{task.center_lat:.4f},{task.center_lng:.4f}"
                     )
+                    if self.telegram.enabled:
+                        asyncio.create_task(self.telegram.notify_task_failed(
+                            task, str(e), task.retry_count, self.max_task_retries
+                        ))
             except Exception as e:
                 logger.error(f"Error en collector: {e}")
                 await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
+                if self.telegram.enabled:
+                    asyncio.create_task(self.telegram.notify_task_failed(
+                        task, str(e)[:200], 0, 0
+                    ))
             finally:
                 self._active_tasks -= 1
                 self.task_queue.task_done()
