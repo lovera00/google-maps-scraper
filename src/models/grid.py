@@ -3,7 +3,7 @@ from typing import List
 from math import cos, radians
 
 
-@dataclass
+@dataclass(slots=True)
 class GridCell:
     lat_min: float
     lat_max: float

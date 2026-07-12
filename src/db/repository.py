@@ -248,6 +248,23 @@ class Repository:
             rows = await cursor.fetchall()
             return {(r[0], r[1], r[2]) for r in rows}
 
+    async def get_overflowed_task_keys(self, cap: int = 120, depth: int = 0) -> set:
+        """(E4) Celdas×categoria que saturaron el cap en corridas previas.
+
+        Devuelve el conjunto de (grid_cell_json, category) de tareas a la
+        profundidad `depth` (por defecto las celdas iniciales) cuyo scrape
+        alcanzo `cap` resultados. Se usa para sembrarlas pre-subdivididas y no
+        re-scrapear el ancestro condenado al overflow.
+        """
+        async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
+            cursor = await db.execute(
+                """SELECT grid_cell_json, category FROM scraping_tasks
+                   WHERE depth = ? AND results_count >= ?""",
+                (depth, cap),
+            )
+            rows = await cursor.fetchall()
+            return {(r[0], r[1]) for r in rows}
+
     async def get_pending_or_in_progress_tasks(self) -> list[dict]:
         """Devuelve tareas interrumpidas (pending o in_progress) para re-encolar."""
         async with aiosqlite.connect(self.db_path, timeout=30.0) as db:

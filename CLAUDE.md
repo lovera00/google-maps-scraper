@@ -45,7 +45,7 @@ python scripts/flush_clean_to_pg.py --dry-run          # Preview curation covera
 
 ## Architecture
 
-5 agents connected by `asyncio.Queue` pipelines. Each agent is a coroutine consuming from an input queue and producing to an output queue, run concurrently via `asyncio.gather()` in `src/orchestrator.py`.
+5 agents connected by `asyncio.Queue` pipelines. Each agent is a coroutine consuming from an input queue and producing to an output queue, run concurrently via `asyncio.gather()` in `src/orchestrator.py`. The DataCollector stage runs **N concurrent workers** (`workers` in config, default 4) over `task_queue` — one shared Chromium browser with N parallel `BrowserContext`s. Downstream stages (Normalizer/Deduplicator/Storage) remain single-coroutine.
 
 ```
 QueryPlanner -> task_queue -> DataCollector -> raw_queue -> Normalizer
@@ -58,7 +58,11 @@ QueryPlanner -> task_queue -> DataCollector -> raw_queue -> Normalizer
 Divides Paraguay bounding box into a grid (default 5km cells), then generates `QueryTask = GridCell + category` for every cell × category. Tasks are sorted by proximity to priority cities (Asuncion, CDE, etc.) so urban areas are scraped first. `handle_overflow()` subdivides cells that hit the 120-result cap.
 
 ### Agent 2 — DataCollector (`src/agents/data_collector.py`)
-Dual-mode: `test_mode=True` loads local HTML from `mocks/google_maps/`; test_mode=False launches Playwright Chromium. In live mode: dismisses consent popups, scrolls the results feed, extracts raw dicts via BeautifulSoup. Coordinates are extracted from two URL patterns: `@lat,lng,z` and `!3dlat!4dlng` (fallback). Category is read from elements with `W4Efsd` class. Google Place ID is extracted from the `data=` URL parameter. Browser crash recovery: if the page/context is closed mid-scrape, the collector tears down and re-launches the browser then retries.
+Dual-mode: `test_mode=True` loads local HTML from `mocks/google_maps/`; test_mode=False launches Playwright Chromium. In live mode: dismisses consent popups, waits for the feed (`wait_for_selector`, not a fixed sleep), scrolls the results feed (stops early at 120 cards, the Google cap `RESULTS_CAP`), extracts raw dicts via BeautifulSoup **parsed in a thread executor** (CPU-bound, keeps the event loop free for the other workers). Coordinates are extracted from two URL patterns: `@lat,lng,z` and `!3dlat!4dlng` (fallback). Category is read from elements with `W4Efsd` class. Google Place ID is extracted from the `data=` URL parameter.
+
+**Concurrency (E1)**: N workers share one browser; each creates/destroys its own `BrowserContext` per task. Each worker has its **own** `RateLimiter` (per-context human pacing, not a global lock). Resource blocking (`block_resources`, default on) aborts image/media/font requests via `context.route()` — leaves CSS/JS/XHR (the feed loads by XHR). Browser crash recovery is coordinated by a lock + generation counter so one worker relaunching the shared browser doesn't tear it down under the others.
+
+**Resilience (E2)**: block detection = `status != 200` **or** captcha/`/sorry` served with 200 (`_detect_block`). On block, the orchestrator triggers a **global pause with escalating backoff** (`block_backoff_base_seconds` × 2^n, capped) and retries the task — it only hard-aborts (`os._exit`) after `max_consecutive_blocks` consecutive blocks. Navigation timeouts raise `ScrapeTransientError` → the task is re-queued with `retry_count++` up to `max_task_retries` (instead of being silently marked completed with 0 results).
 
 Mock HTML files use Google Maps DOM structure: `[role="feed"]` containers, `<a href="/maps/place/...@lat,lng,z">` cards with `aria-label` for names and `W4Efsd` spans for categories. A `<div class="overflow-simulated">120</div>` element triggers the overflow feedback loop in test mode.
 
@@ -87,7 +91,7 @@ On match: update fields (category, rating, etc.) and fill in missing `source_url
 - **Playwright over Selenium**: native async API, better stealth via `playwright-stealth`.
 - **Pydantic settings**: `config.yaml` is validated at load time by `src/config/settings.py`. The `Settings` model is the single source of truth for all configuration.
 - **Mock mode**: `DataCollector` checks `self.test_mode` and dispatches to `_scrape_mock()` vs `_scrape_live()`. Mock routing maps categories to HTML files in `_load_mock_html()`.
-- **Rate limiting**: `RateLimiter` class enforces `request_delay_seconds` between live requests. `RetryHandler` with exponential backoff for transient failures.
+- **Rate limiting**: one `RateLimiter` per worker enforces a randomized delay (`request_delay_min/max_seconds`) between that worker's live requests — throughput comes from N parallel contexts, not from speeding up any single one. `max_retries` (browser-crash retries) and the block/transient knobs live in the `rate_limit` config section.
 - **Proxy support**: Optional proxy rotation via `src/proxy/manager.py` — file-based proxy list, round-robin rotation, health checks, cooldown on failure. Disabled by default (`proxies.enabled: false`).
 - **Pause/resume**: The `scraping_tasks` audit table tracks every task as pending→in_progress→completed/failed. On restart with resume (default), completed tasks are skipped and interrupted tasks (pending/in_progress) are re-queued. Use `--no-resume` to start fresh.
 

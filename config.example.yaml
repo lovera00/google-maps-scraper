@@ -4,8 +4,10 @@
 # === Modo de ejecucion ===
 test_mode: false
 headless: true
-workers: 2
-block_resources: true      # abortar imagenes/media/fonts en modo live (no toca CSS/JS/XHR)
+workers: 4                 # scrapers concurrentes: 1 browser Chromium, N BrowserContexts en paralelo
+task_queue_high_water: 5000  # tope de tareas en cola (acota RAM; el productor streamea el shard, no lo carga entero)
+browser_recycle_interval: 500  # reciclar el navegador cada N tareas (libera memoria retenida por Playwright); 0 = nunca
+block_resources: true      # bloquear imagenes/fonts via flags de Chromium en modo live (sin interceptar requests)
 save_debug_html: false     # guardar HTML crudo por scrape en data/debug_html/ (diagnostico)
 
 # === Base de datos ===
@@ -24,6 +26,7 @@ postgres:
 grid:
   initial_size_km: 5.0
   max_depth: 5
+  overflow_seed_depth: 1   # E4: sembrar pre-subdivididas las celdas que ya saturaron en corridas previas (0 = off)
   bounding_box:
     lat_min: -27.6
     lat_max: -19.3
@@ -294,9 +297,13 @@ categories:
 # === Rate Limiting ===
 rate_limit:
   request_delay_seconds: 3
-  max_retries: 3
+  max_retries: 3                    # reintentos ante crash de navegador
   retry_backoff_base: 2
   max_scroll_iterations: 50
+  max_task_retries: 3               # reintentos por tarea ante fallo transitorio (timeout)
+  max_consecutive_blocks: 5         # bloqueos consecutivos antes de abortar el run
+  block_backoff_base_seconds: 300   # pausa base ante bloqueo (escala 5m, 10m, 20m...)
+  block_backoff_max_seconds: 3600   # tope de la pausa
 
 # === Deduplicacion ===
 dedup:

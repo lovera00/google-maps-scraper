@@ -22,10 +22,22 @@ logger = logging.getLogger(__name__)
 
 
 class GoogleMapsBlockedError(Exception):
-    """Google Maps respondio con un status HTTP distinto de 200.
+    """Google Maps nos esta bloqueando (status != 200, o captcha / pagina
+    /sorry servida con 200).
 
-    Senal de que probablemente nos esta bloqueando/rate-limitando; no tiene
-    sentido reintentar la tarea individual, hay que frenar todo el pipeline.
+    Ya NO aborta el pipeline de inmediato: el orquestador dispara una pausa
+    global con backoff exponencial (ver DataCollector.handle_block) y reintenta
+    la tarea. Solo se aborta si el bloqueo persiste tras `max_consecutive_blocks`
+    pausas.
+    """
+
+
+class ScrapeTransientError(Exception):
+    """Fallo transitorio de un scrape (timeout de navegacion, error de red).
+
+    No es un bloqueo de Google ni un crash del navegador: la tarea se re-encola
+    con retry_count++ hasta `max_task_retries` antes de marcarse failed, en vez
+    de perderse como 'completed con 0 resultados'.
     """
 
 
@@ -33,10 +45,30 @@ class DataCollector:
     # Cap de resultados de Google Maps por busqueda. Al alcanzarlo no tiene
     # sentido seguir scrolleando (el orquestador lo usa como umbral de overflow).
     RESULTS_CAP = 120
-    # Tipos de recurso que se abortan cuando block_resources esta activo. Se
-    # dejan pasar document/script/stylesheet/xhr/fetch: el feed carga por XHR y
-    # los checks de visibilidad dependen del layout (CSS).
-    _BLOCKED_RESOURCE_TYPES = {"image", "media", "font", "imageset"}
+    # Bloqueo de recursos pesados: se hace a NIVEL NAVEGADOR via flags de launch
+    # (ver setup), NO con context.route(). Interceptar cada request desde Python
+    # fuga memoria (Playwright retiene Tasks/tracebacks por request; solo se
+    # liberan con playwright.stop()) y fue la causa del OOM de ~73GB en 7h.
+    _IMAGE_BLOCK_ARGS = [
+        "--blink-settings=imagesEnabled=false",
+        "--disable-remote-fonts",
+    ]
+    # Mensajes que indican que el navegador se cayo (no es bloqueo de Google).
+    _BROWSER_CRASH_KEYWORDS = (
+        "Connection closed",
+        "Target page, context or browser has been closed",
+        "Browser has been closed",
+        "Protocol error",
+    )
+    # Señales de bloqueo servidas con HTTP 200 (captcha / trafico inusual).
+    _BLOCK_CONTENT_SIGNALS = (
+        "unusual traffic", "trafico inusual", "tráfico inusual",
+        "not a robot", "no soy un robot", "recaptcha",
+    )
+
+    @classmethod
+    def _is_browser_crash(cls, msg: str) -> bool:
+        return any(kw in msg for kw in cls._BROWSER_CRASH_KEYWORDS)
 
     def __init__(self, config):
         self.config = config
@@ -48,14 +80,50 @@ class DataCollector:
         self.max_scrolls = config.rate_limit.max_scroll_iterations
         self.block_resources = getattr(config, "block_resources", True)
         self.save_debug_html = getattr(config, "save_debug_html", False)
-        self.rate_limiter = RateLimiter(
-            config.rate_limit.request_delay_seconds,
-            min_delay=config.rate_limit.request_delay_min_seconds,
-            max_delay=config.rate_limit.request_delay_max_seconds,
-        )
+        self.crash_retries = config.rate_limit.max_retries
+        self.max_consecutive_blocks = getattr(
+            config.rate_limit, "max_consecutive_blocks", 5)
+        self.block_backoff_base = getattr(
+            config.rate_limit, "block_backoff_base_seconds", 300.0)
+        self.block_backoff_max = getattr(
+            config.rate_limit, "block_backoff_max_seconds", 3600.0)
+        # Un RateLimiter POR worker: cada context se comporta a ritmo humano
+        # (2-6 s entre SUS requests) de forma independiente. Un limiter global
+        # con lock serializaria todo y anularia el paralelismo de E1; la
+        # velocidad sale de tener N contexts, no de apurar cada uno.
+        self.num_workers = max(1, getattr(config, "workers", 1))
+        self.rate_limiters = [
+            RateLimiter(
+                config.rate_limit.request_delay_seconds,
+                min_delay=config.rate_limit.request_delay_min_seconds,
+                max_delay=config.rate_limit.request_delay_max_seconds,
+            )
+            for _ in range(self.num_workers)
+        ]
+        self.rate_limiter = self.rate_limiters[0]  # alias compat
         self.browser = None
         self.context = None
         self.page = None
+        # Compuerta de pausa global ante bloqueo de Google. set() = abierta
+        # (los workers pueden scrapear); clear() = pausada. Compartida por todos
+        # los workers.
+        self._block_gate = asyncio.Event()
+        self._block_gate.set()
+        self._block_lock = asyncio.Lock()
+        self._consecutive_blocks = 0
+        # Recovery del browser COMPARTIDO ante crash: solo un worker relanza a
+        # la vez; los demas detectan el cambio de generacion y no re-relanzan.
+        self._browser_lock = asyncio.Lock()
+        self._browser_generation = 0
+        # Reciclado periodico del browser para liberar la memoria que Playwright
+        # retiene del lado Python. _in_flight = scrapes con context abierto ahora;
+        # el reciclado espera a que llegue a 0 (compuerta) antes de cerrar el
+        # browser compartido, para no cerrarlo bajo otros workers.
+        self.browser_recycle_interval = getattr(config, "browser_recycle_interval", 500)
+        self._scrapes_since_recycle = 0
+        self._in_flight = 0
+        self._recycle_gate = asyncio.Event()
+        self._recycle_gate.set()
 
     async def setup(self):
         if self.test_mode or self.config.test_mode:
@@ -67,10 +135,15 @@ class DataCollector:
         except ImportError:
             logger.error("Playwright no instalado. Ejecuta: pip install playwright && playwright install")
             raise
+        launch_args = ["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
+        if self.block_resources:
+            # Bloquear imagenes/fonts a nivel navegador (barato, sin fuga) en
+            # vez de interceptar cada request con context.route (que fugaba RAM).
+            launch_args += self._IMAGE_BLOCK_ARGS
         self._playwright = await async_playwright().start()
         self.browser = await self._playwright.chromium.launch(
             headless=self.headless,
-            args=["--no-sandbox", "--disable-dev-shm-usage"],
+            args=launch_args,
         )
         logger.info("DataCollector: navegador Playwright iniciado")
 
@@ -90,24 +163,26 @@ class DataCollector:
         self._playwright = None
         logger.info("DataCollector: navegador cerrado")
 
-    async def scrape(self, task: QueryTask) -> List[dict]:
+    async def scrape(self, task: QueryTask, worker_id: int = 0) -> List[dict]:
         if self.test_mode:
             results = await self._scrape_mock(task)
         else:
-            max_retries = 3
+            max_retries = self.crash_retries
             results = []
+            self._scrapes_since_recycle += 1
             for attempt in range(max_retries + 1):
+                gen = self._browser_generation
                 try:
-                    results = await self._scrape_live(task)
+                    results = await self._scrape_live(task, worker_id)
+                    self.note_success()
                     break
+                except (GoogleMapsBlockedError, ScrapeTransientError):
+                    # Bloqueo o fallo transitorio: los maneja el orquestador
+                    # (pausa con backoff / re-encolado). No reintentar aca.
+                    raise
                 except Exception as e:
                     msg = str(e)
-                    is_browser_crash = any(kw in msg for kw in (
-                        "Connection closed",
-                        "Target page, context or browser has been closed",
-                        "Browser has been closed",
-                        "Protocol error",
-                    ))
+                    is_browser_crash = self._is_browser_crash(msg)
                     if is_browser_crash and attempt < max_retries:
                         delay = 2 ** attempt  # 1s, 2s, 4s
                         logger.warning(
@@ -115,8 +190,9 @@ class DataCollector:
                             f"reiniciando en {delay}s... ({e})"
                         )
                         await asyncio.sleep(delay)
-                        await self.teardown()
-                        await self.setup()
+                        # Relanzar el browser compartido de forma coordinada:
+                        # si otro worker ya lo relanzo, este no lo vuelve a hacer.
+                        await self._recover_browser(gen)
                     elif is_browser_crash:
                         logger.error(
                             f"Navegador desconectado tras {max_retries} reintentos. "
@@ -130,6 +206,68 @@ class DataCollector:
         for r in results:
             r["search_category"] = task.category
         return results
+
+    async def _recover_browser(self, gen_at_failure: int):
+        """Relanza el browser compartido tras un crash, coordinado entre workers.
+
+        Solo relanza si nadie mas lo hizo desde que este worker vio el fallo
+        (comparando la generacion). Evita que N workers cierren y relancen el
+        browser en cascada, tumbandoselo unos a otros.
+        """
+        async with self._browser_lock:
+            if self._browser_generation != gen_at_failure:
+                return  # otro worker ya relanzo el browser
+            await self.teardown()
+            await self.setup()
+            self._browser_generation += 1
+
+    # ── Resiliencia ante bloqueo (E2) ──────────────────────────
+
+    async def wait_if_blocked(self):
+        """Bloquea si hay una pausa global en curso (Google nos esta bloqueando)."""
+        await self._block_gate.wait()
+
+    def note_success(self):
+        """Un scrape exitoso resetea el contador de bloqueos consecutivos."""
+        self._consecutive_blocks = 0
+
+    async def handle_block(self) -> bool:
+        """Gestiona un bloqueo de Google con pausa global escalante.
+
+        Devuelve True si conviene reintentar (tras la pausa), False si el
+        bloqueo persiste tras `max_consecutive_blocks` y hay que abortar.
+
+        Solo el primer worker que detecta el bloqueo hace la pausa; los demas
+        se suman a la misma pausa (esperan la compuerta) sin apilar backoff.
+        """
+        # Si ya hay una pausa en curso, sumarse a ella sin escalar el backoff.
+        if not self._block_gate.is_set():
+            await self._block_gate.wait()
+            return True
+
+        async with self._block_lock:
+            if not self._block_gate.is_set():
+                await self._block_gate.wait()
+                return True
+            self._consecutive_blocks += 1
+            if self._consecutive_blocks > self.max_consecutive_blocks:
+                return False
+            n = self._consecutive_blocks
+            delay = min(self.block_backoff_base * (2 ** (n - 1)),
+                        self.block_backoff_max)
+            # Cerrar la compuerta dentro del lock para que ningun otro worker
+            # inicie una segunda pausa en paralelo.
+            self._block_gate.clear()
+
+        logger.warning(
+            f"Google Maps nos esta bloqueando (bloqueo consecutivo #{n}/"
+            f"{self.max_consecutive_blocks}); pausando {delay:.0f}s antes de reintentar"
+        )
+        try:
+            await asyncio.sleep(delay)
+        finally:
+            self._block_gate.set()
+        return True
 
     # ── Mock mode ──────────────────────────────────────────────
 
@@ -216,29 +354,49 @@ class DataCollector:
 
     # ── Live mode (Playwright) ─────────────────────────────────
 
-    async def _scrape_live(self, task: QueryTask) -> List[dict]:
-        await self.rate_limiter.wait()
+    async def _scrape_live(self, task: QueryTask, worker_id: int = 0) -> List[dict]:
+        # Reciclar el browser periodicamente (libera memoria de Playwright) y
+        # respetar una pausa global si Google nos esta bloqueando.
+        await self._maybe_recycle_browser()
+        await self.wait_if_blocked()
+        # Rate limiter propio de este worker (ritmo humano independiente).
+        await self.rate_limiters[worker_id % len(self.rate_limiters)].wait()
         url = task.to_maps_url()
-        logger.info(f"Scraping: {url}")
+        logger.info(f"[w{worker_id}] Scraping: {url}")
 
+        # Tomar la referencia al browser compartido bajo lock y contar este
+        # scrape como en vuelo, de forma atomica respecto al reciclado: mientras
+        # este worker sostiene el lock, el reciclador no puede cerrar el browser.
+        async with self._browser_lock:
+            browser = self.browser
+            self._in_flight += 1
         fp = random_fingerprint()
-        context = await self.browser.new_context(
-            viewport=fp["viewport"],
-            user_agent=fp["user_agent"],
-            locale="es-PY",
-            timezone_id="America/Asuncion",
-        )
-        if self.block_resources:
-            # Abortar imagenes/media/fonts antes de navegar: ~50-70% menos de
-            # descarga y CPU por pagina, sin afectar el feed (carga por XHR).
-            await context.route("**/*", self._route_blocker)
-        page = await context.new_page()
-
+        context = None
         try:
-            response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            context = await browser.new_context(
+                viewport=fp["viewport"],
+                user_agent=fp["user_agent"],
+                locale="es-PY",
+                timezone_id="America/Asuncion",
+            )
+            page = await context.new_page()
+
+            try:
+                response = await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+            except Exception as e:
+                if self._is_browser_crash(str(e)):
+                    raise
+                # Timeout u otro fallo al navegar: transitorio -> reintentar la
+                # tarea (no marcarla 'completed con 0').
+                raise ScrapeTransientError(f"Fallo al navegar a {url}: {e}")
+
             if response is not None and response.status != 200:
                 raise GoogleMapsBlockedError(
                     f"Google Maps respondio HTTP {response.status} (esperado 200) para {url}"
+                )
+            if await self._detect_block(page):
+                raise GoogleMapsBlockedError(
+                    f"Pagina de bloqueo/captcha detectada (HTTP 200) en {page.url}"
                 )
 
             # Manejar popup de consentimiento (best-effort, corto)
@@ -265,38 +423,85 @@ class DataCollector:
             if self.save_debug_html:
                 self._save_debug_html(html, task)
 
-            soup = BeautifulSoup(html, "lxml")
-            return self._parse_results(soup)
-        except GoogleMapsBlockedError:
+            # Parsear en un thread: BeautifulSoup/lxml es CPU-bound (~1-3 s en
+            # paginas densas) y bloquearia el event loop, serializando a los N
+            # workers. run_in_executor libera el loop para los otros scrapes.
+            loop = asyncio.get_running_loop()
+            return await loop.run_in_executor(None, self._parse_html, html)
+        except (GoogleMapsBlockedError, ScrapeTransientError):
             raise
         except Exception as e:
-            msg = str(e)
             # Errores de crash de navegador: re-lanzar para que scrape() reconecte
-            if any(kw in msg for kw in (
-                "Connection closed",
-                "Target page, context or browser has been closed",
-                "Browser has been closed",
-                "Protocol error",
-            )):
+            if self._is_browser_crash(str(e)):
                 raise
             logger.error(f"Error en scrape live: {e}")
             return []
         finally:
-            await context.close()
+            self._in_flight -= 1
+            if context is not None:
+                try:
+                    await context.close()
+                except Exception:
+                    pass  # el browser pudo cerrarse (recycle/crash); no enmascarar
 
-    async def _route_blocker(self, route):
-        """Aborta recursos pesados (imagenes/media/fonts), deja pasar el resto."""
+    async def _maybe_recycle_browser(self):
+        """Recicla el browser+conexion Playwright cada browser_recycle_interval
+        tareas para liberar la memoria que Playwright retiene del lado Python
+        (solo se libera con playwright.stop(), no con browser.close()).
+
+        Seguro para el browser COMPARTIDO: cierra una compuerta para que no
+        arranquen scrapes nuevos, espera a que los en vuelo terminen (in_flight
+        == 0) y recien ahi hace teardown()+setup(). Asi nunca cierra el browser
+        con contexts abiertos de otros workers (evita crash-storm)."""
+        if self.browser_recycle_interval <= 0:
+            return
+        # Si hay un reciclado en curso, esperar a que termine.
+        await self._recycle_gate.wait()
+        if self._scrapes_since_recycle < self.browser_recycle_interval:
+            return
+        async with self._browser_lock:
+            # Doble chequeo: otro worker pudo haber tomado el reciclado.
+            if (self._scrapes_since_recycle < self.browser_recycle_interval
+                    or not self._recycle_gate.is_set()):
+                return
+            self._recycle_gate.clear()  # bloquea scrapes nuevos en la compuerta
+
+        logger.info(
+            f"Reciclando navegador tras ~{self._scrapes_since_recycle} tareas "
+            f"(libera memoria retenida por Playwright)"
+        )
+        # Esperar a que drenen los scrapes en vuelo y reciclar bajo lock. Como
+        # los scrapes nuevos quedan bloqueados en la compuerta antes de tocar
+        # _in_flight, este contador solo puede bajar: converge a 0.
+        while True:
+            await asyncio.sleep(0.1)
+            async with self._browser_lock:
+                if self._in_flight == 0:
+                    await self.teardown()
+                    await self.setup()
+                    self._browser_generation += 1
+                    self._scrapes_since_recycle = 0
+                    break
+        self._recycle_gate.set()
+
+    async def _detect_block(self, page) -> bool:
+        """Detecta paginas de bloqueo/captcha servidas con HTTP 200.
+
+        Google a veces responde 200 con una pagina /sorry o de 'trafico inusual'
+        en vez de un status de error. Chequeo barato: URL final + titulo.
+        """
         try:
-            if route.request.resource_type in self._BLOCKED_RESOURCE_TYPES:
-                await route.abort()
-            else:
-                await route.continue_()
+            final_url = (page.url or "").lower()
         except Exception:
-            # Si la ruta ya fue manejada/cerrada, no romper el scrape
-            try:
-                await route.continue_()
-            except Exception:
-                pass
+            final_url = ""
+        if "/sorry/" in final_url or "sorry/index" in final_url:
+            return True
+        try:
+            title = (await page.title() or "").lower()
+        except Exception:
+            title = ""
+        haystack = f"{title} {final_url}"
+        return any(sig in haystack for sig in self._BLOCK_CONTENT_SIGNALS)
 
     async def _dismiss_consent(self, page):
         for sel in SELECTORS["consent_button"]:
@@ -439,6 +644,11 @@ class DataCollector:
                       "ciudad del este", "paraguay", "py", "españa", "argentina"):
             return False
         return True
+
+    def _parse_html(self, html: str) -> List[dict]:
+        """Construye el soup y parsea. Sincrono, pensado para run_in_executor."""
+        soup = BeautifulSoup(html, "lxml")
+        return self._parse_results(soup)
 
     def _parse_results(self, soup: BeautifulSoup) -> List[dict]:
         results = []

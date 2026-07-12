@@ -23,26 +23,64 @@ class QueryPlanner:
         )
         self.initial_grid_size_km = grid_cfg.initial_size_km
         self.max_depth = grid_cfg.max_depth
+        self.overflow_seed_depth = getattr(grid_cfg, "overflow_seed_depth", 0)
         self.categories = config.categories
         self.district_locations = self._load_districts()
         self.boundary = self._load_boundary()
 
-    def generate_initial_tasks(self) -> List[QueryTask]:
+    def generate_initial_tasks(self, overflow_keys: set = None) -> List[QueryTask]:
+        """Genera una tarea por (celda, categoria).
+
+        (E4) Si `overflow_keys` (conjunto de (grid_cell_json, category) que
+        saturaron el cap en corridas previas) no esta vacio y
+        overflow_seed_depth > 0, esas celdas se emiten ya subdivididas a
+        `overflow_seed_depth` en vez de a depth 0, para no re-scrapear el
+        ancestro que se sabe condenado al overflow.
+        """
+        overflow_keys = overflow_keys or set()
         cells = self._grid_cells()
         tasks = []
+        seeded = 0
         for cell in cells:
+            cell_json = cell.to_json()
             for category in self.categories:
-                priority = self._calculate_priority(cell)
-                tasks.append(QueryTask(
-                    grid_cell=cell,
-                    category=category,
-                    depth=0,
-                    priority=priority,
-                ))
+                if (self.overflow_seed_depth > 0
+                        and (cell_json, category) in overflow_keys):
+                    for sc in self._expand_to_depth(cell, self.overflow_seed_depth):
+                        tasks.append(QueryTask(
+                            grid_cell=sc,
+                            category=category,
+                            depth=self.overflow_seed_depth,
+                            priority=self._calculate_priority(sc),
+                        ))
+                    seeded += 1
+                else:
+                    tasks.append(QueryTask(
+                        grid_cell=cell,
+                        category=category,
+                        depth=0,
+                        priority=self._calculate_priority(cell),
+                    ))
         tasks.sort(key=lambda t: t.priority)
-        logger.info(f"QueryPlanner: {len(tasks)} tareas iniciales generadas "
-                     f"({len(cells)} celdas x {len(self.categories)} categorias)")
+        msg = (f"QueryPlanner: {len(tasks)} tareas iniciales generadas "
+               f"({len(cells)} celdas x {len(self.categories)} categorias)")
+        if seeded:
+            msg += (f"; {seeded} celda-categorias sembradas pre-subdivididas "
+                    f"a depth {self.overflow_seed_depth} por overflow previo")
+        logger.info(msg)
         return tasks
+
+    def _expand_to_depth(self, cell: GridCell, depth: int) -> List[GridCell]:
+        """Subdivide una celda `depth` veces (4^depth subceldas), recortando las
+        que caen fuera de la frontera de Paraguay."""
+        current = [cell]
+        for _ in range(depth):
+            nxt = []
+            for c in current:
+                nxt.extend(sc for sc in c.subdivide_quadrant()
+                           if self._cell_in_paraguay(sc))
+            current = nxt
+        return current
 
     def handle_overflow(self, task: QueryTask) -> List[QueryTask]:
         if task.depth >= self.max_depth:

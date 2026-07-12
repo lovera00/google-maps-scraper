@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from .grid import GridCell
 
 
-@dataclass
+@dataclass(slots=True)
 class QueryTask:
     grid_cell: GridCell
     category: str

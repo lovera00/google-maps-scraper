@@ -1,8 +1,10 @@
 """Orquestador central del pipeline multi-agente.
 
 Coordina los 5 agentes usando asyncio.Queue como buffers entre etapas.
-Corte inmediato (sin drenar colas ni flush) ante Ctrl+C/SIGTERM o si
-Google Maps deja de responder 200 (ver _abort_immediately).
+Corte inmediato (sin drenar colas ni flush) ante Ctrl+C/SIGTERM (ver
+_abort_immediately). Ante bloqueo de Google NO se corta de una: se dispara
+una pausa global con backoff escalante y se reintenta la tarea; solo se aborta
+si el bloqueo persiste tras `max_consecutive_blocks` pausas.
 """
 import asyncio
 import json
@@ -16,7 +18,11 @@ from .config.loader import load_config
 from .config.settings import Settings
 from .utils.logging_config import setup_logging
 from .agents.query_planner import QueryPlanner
-from .agents.data_collector import DataCollector, GoogleMapsBlockedError
+from .agents.data_collector import (
+    DataCollector,
+    GoogleMapsBlockedError,
+    ScrapeTransientError,
+)
 from .agents.normalizer import Normalizer
 from .agents.deduplicator import Deduplicator
 from .agents.storage import Storage
@@ -70,24 +76,67 @@ class Orchestrator:
         self.deduplicator = Deduplicator(self.config)
         self.storage = Storage(self.config)
 
+        # Reintentos por tarea ante fallo transitorio (timeout de navegacion)
+        self.max_task_retries = getattr(
+            self.config.rate_limit, "max_task_retries", 3)
+
+        # Paralelismo del collector (E1): N workers concurrentes sobre task_queue.
+        self.num_workers = max(1, getattr(self.config, "workers", 1))
+        # Tareas actualmente en proceso (dequeued, sin terminar). Un worker solo
+        # termina cuando la cola esta vacia Y nadie esta procesando: asi no corta
+        # mientras otro worker esta por inyectar sub-tareas de overflow.
+        self._active_tasks = 0
+        # Streaming de tareas: el productor (_feed_tasks) encola de a poco para
+        # acotar RAM; los workers no deben terminar hasta que el productor termine.
+        self.task_queue_high_water = getattr(self.config, "task_queue_high_water", 5000)
+        self._producer_done = False
+
         # Estadisticas
         self.stats = ScrapingStats()
 
-    async def load_tasks_from_file(self, path: str):
+    def _iter_tasks_from_file(self, path: str):
+        """Generador LAZY: una QueryTask por linea, sin cargar el archivo entero
+        en memoria. Lo consume el productor _feed_tasks con backpressure."""
         task_path = Path(path)
         if not task_path.exists():
             raise FileNotFoundError(f"Archivo de tareas no encontrado: {path}")
-        count = 0
         with open(task_path, "r", encoding="utf-8") as f:
             for line in f:
                 line = line.strip()
                 if not line:
                     continue
-                d = json.loads(line)
-                task = QueryTask.from_dict(d)
-                self.task_queue.put_nowait(task)
-                count += 1
-        logger.info(f"{count} tareas cargadas desde {path}")
+                yield QueryTask.from_dict(json.loads(line))
+
+    async def _feed_tasks(self, task_source, completed: set):
+        """Productor: encola tareas desde `task_source` (iterable lazy) con
+        backpressure por high-water para acotar la RAM, salteando las ya
+        completadas (resume). Marca _producer_done al terminar."""
+        fed = 0
+        skipped = 0
+        hw = self.task_queue_high_water
+        check_completed = bool(completed)
+        try:
+            for task in task_source:
+                if check_completed:
+                    key = (task.grid_cell.to_json(), task.category, task.depth)
+                    if key in completed:
+                        skipped += 1
+                        continue
+                # Backpressure: si la cola ya tiene suficiente adelanto, esperar
+                # a que los workers drenen antes de seguir encolando.
+                while self.task_queue.qsize() >= hw:
+                    await asyncio.sleep(0.2)
+                await self.task_queue.put(task)
+                fed += 1
+                if fed % 2000 == 0:
+                    await asyncio.sleep(0)  # ceder el loop a los workers
+                if fed % 100000 == 0:
+                    logger.info(f"Feed: {fed} tareas encoladas "
+                                f"(cola actual={self.task_queue.qsize()})")
+        finally:
+            self._producer_done = True
+        logger.info(f"Feed completo: {fed} tareas encoladas, "
+                    f"{skipped} salteadas (ya completadas)")
 
     def _handle_shutdown_signal(self):
         """Callback sincrono para Ctrl+C / SIGTERM. Corta el proceso ya mismo,
@@ -120,20 +169,37 @@ class Orchestrator:
             signal.signal(signal.SIGINT, lambda s, f: self._handle_shutdown_signal())
             signal.signal(signal.SIGTERM, lambda s, f: self._handle_shutdown_signal())
 
-        # Cargar tareas (desde archivo o generadas)
+        # Preparar la fuente de tareas de forma LAZY (streaming): un productor
+        # (_feed_tasks) las encola con backpressure en vez de cargar el shard
+        # entero en RAM. Resume = saltear las ya completadas (aplica tambien al
+        # modo archivo, que antes re-scrapeaba todo al reiniciar).
+        completed = set()
+        if resume:
+            completed = await self.storage.repo.get_completed_task_keys()
+            if completed:
+                logger.info(f"Reanudando: {len(completed)} tareas ya completadas se saltearan")
+
         if tasks_file:
-            await self.load_tasks_from_file(tasks_file)
+            task_source = self._iter_tasks_from_file(tasks_file)
         else:
-            tasks = self.planner.generate_initial_tasks()
+            # (E4) Sembrar pre-subdivididas las celdas que ya saturaron el cap
+            # en corridas previas (historial en scraping_tasks), para no
+            # re-scrapear el ancestro condenado al overflow.
+            overflow_keys = None
+            if getattr(self.planner, "overflow_seed_depth", 0) > 0:
+                overflow_keys = await self.storage.repo.get_overflowed_task_keys(
+                    self.collector.RESULTS_CAP
+                )
+                if overflow_keys:
+                    logger.info(
+                        f"E4: {len(overflow_keys)} celda-categorias con overflow "
+                        f"previo se sembraran pre-subdivididas"
+                    )
+            # Lista ordenada por prioridad; se itera de forma lazy (se preserva
+            # el orden urbano->rural).
+            task_source = iter(self.planner.generate_initial_tasks(overflow_keys))
 
             if resume:
-                completed = await self.storage.repo.get_completed_task_keys()
-                if completed:
-                    tasks = [t for t in tasks
-                             if (t.grid_cell.to_json(), t.category, t.depth) not in completed]
-                    logger.info(f"Reanudando: {len(completed)} tareas completadas, "
-                                f"{len(tasks)} tareas pendientes")
-
                 interrupted = await self.storage.repo.get_pending_or_in_progress_tasks()
                 if interrupted:
                     for row in interrupted:
@@ -147,15 +213,13 @@ class Orchestrator:
                         self.task_queue.put_nowait(task)
                     logger.info(f"{len(interrupted)} tareas interrumpidas re-encoladas")
 
-            for t in tasks:
-                self.task_queue.put_nowait(t)
-            logger.info(f"{len(tasks)} tareas encoladas")
-
         await self.collector.setup()
 
+        logger.info(f"Lanzando {self.num_workers} workers de scraping concurrentes")
         try:
             await asyncio.gather(
-                self._run_collector(),
+                self._feed_tasks(task_source, completed),
+                self._run_all_collectors(),
                 self._run_normalizer(),
                 self._run_deduplicator(),
                 self._run_storage(),
@@ -208,24 +272,41 @@ class Orchestrator:
         count = await self.storage.export_json(json_path)
         logger.info(f"Datos exportados a {json_path}: {count} registros")
 
-    async def _run_collector(self):
+    async def _run_all_collectors(self):
+        """Lanza N workers de scraping y emite UN solo sentinela al terminar todos."""
+        await asyncio.gather(
+            *[self._collector_worker(i) for i in range(self.num_workers)]
+        )
+        # Recien cuando TODOS los workers terminaron, cerrar el stream aguas abajo.
+        await self.raw_queue.put(None)
+        logger.info("Todos los collectors finalizaron")
+
+    async def _collector_worker(self, worker_id: int):
         while True:
             try:
-                task = await asyncio.wait_for(self.task_queue.get(), timeout=10.0)
+                task = await asyncio.wait_for(self.task_queue.get(), timeout=5.0)
             except asyncio.TimeoutError:
-                if self.task_queue.empty():
+                # Terminar solo si el productor ya termino de encolar, la cola
+                # esta vacia, y nadie esta procesando (un scrape en curso podria
+                # estar por inyectar sub-tareas de overflow). Sin la condicion de
+                # _producer_done, un worker podria cortar durante un bache del
+                # productor al arranque, cuando la cola aun no se lleno.
+                if (self._producer_done
+                        and self.task_queue.empty()
+                        and self._active_tasks == 0):
                     break
                 continue
 
+            self._active_tasks += 1
             task_key = (task.grid_cell.to_json(), task.category, task.depth)
 
             try:
                 await self.storage.repo.mark_task_in_progress(*task_key)
 
-                raw_businesses = await self.collector.scrape(task)
+                raw_businesses = await self.collector.scrape(task, worker_id)
                 result_count = len(raw_businesses)
 
-                if result_count >= 120:
+                if result_count >= self.collector.RESULTS_CAP:
                     new_tasks = self.planner.handle_overflow(task)
                     for nt in new_tasks:
                         nt_key = (nt.grid_cell.to_json(), nt.category, nt.depth)
@@ -246,16 +327,40 @@ class Orchestrator:
 
             except GoogleMapsBlockedError as e:
                 logger.error(f"Google Maps bloqueado: {e}")
-                await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
-                self._abort_immediately(f"Google Maps no respondio 200 ({e})")
+                # Pausa global con backoff escalante en vez de abortar de una.
+                should_retry = await self.collector.handle_block()
+                if not should_retry:
+                    await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
+                    self._abort_immediately(
+                        f"Google Maps sigue bloqueando tras "
+                        f"{self.collector.max_consecutive_blocks} pausas con backoff ({e})"
+                    )
+                # Re-encolar la MISMA tarea para reintentarla tras la pausa.
+                await self.task_queue.put(task)
+                logger.info("Reintentando la tarea tras la pausa por bloqueo")
+            except ScrapeTransientError as e:
+                if task.retry_count < self.max_task_retries:
+                    task.retry_count += 1
+                    await self.task_queue.put(task)
+                    logger.warning(
+                        f"Fallo transitorio (retry {task.retry_count}/"
+                        f"{self.max_task_retries}), re-encolando: {e}"
+                    )
+                else:
+                    await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
+                    logger.error(
+                        f"Fallo transitorio tras {self.max_task_retries} reintentos, "
+                        f"marcando failed: {task.category} @ "
+                        f"{task.center_lat:.4f},{task.center_lng:.4f}"
+                    )
             except Exception as e:
                 logger.error(f"Error en collector: {e}")
                 await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
             finally:
+                self._active_tasks -= 1
                 self.task_queue.task_done()
 
-        await self.raw_queue.put(None)
-        logger.info("Collector finalizado")
+        logger.info(f"[w{worker_id}] collector finalizado")
 
     async def _run_normalizer(self):
         batch = []

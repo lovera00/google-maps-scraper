@@ -13,15 +13,28 @@ class GridConfig(BaseModel):
     initial_size_km: float = 5.0
     max_depth: int = 5
     bounding_box: BoundingBox
+    # E4: en una corrida nueva, sembrar pre-subdivididas a esta profundidad SOLO
+    # las celdas×categoria que ya saturaron el cap en corridas previas (historial
+    # en scraping_tasks). Evita re-scrapear los ancestros condenados al overflow.
+    # 0 = desactivado. 1 = seguro (coincide con lo que el overflow haria igual).
+    overflow_seed_depth: int = 1
 
 
 class RateLimitConfig(BaseModel):
     request_delay_seconds: float = 3.0  # fallback si no se define el rango
     request_delay_min_seconds: Optional[float] = None
     request_delay_max_seconds: Optional[float] = None
-    max_retries: int = 3
+    max_retries: int = 3               # reintentos ante crash de navegador
     retry_backoff_base: float = 2.0
     max_scroll_iterations: int = 50
+    # --- Resiliencia ante bloqueo de Google (E2) ---
+    # Reintentos por tarea ante fallo transitorio (timeout de navegacion, etc.)
+    # antes de marcarla failed. Sobreviven al resume via retry_count del task.
+    max_task_retries: int = 3
+    # Pausa global escalante ante deteccion de bloqueo: base * 2^(n-1), capada.
+    max_consecutive_blocks: int = 5
+    block_backoff_base_seconds: float = 300.0    # 5 min
+    block_backoff_max_seconds: float = 3600.0    # 1 h
 
 
 class DedupConfig(BaseModel):
@@ -88,7 +101,13 @@ class OsmConfig(BaseModel):
 class Settings(BaseModel):
     test_mode: bool = False
     headless: bool = True
-    workers: int = 2
+    workers: int = 4          # workers de scraping concurrentes (1 browser, N contexts)
+    # Tope de adelanto del productor de tareas: mantiene la task_queue por debajo
+    # de este tamaño para acotar la RAM (no cargar el shard entero en memoria).
+    task_queue_high_water: int = 5000
+    # Reciclar el navegador (teardown+setup, con playwright.stop()) cada N tareas
+    # para liberar la memoria que Playwright retiene del lado Python. 0 = nunca.
+    browser_recycle_interval: int = 500
     # Bloquear descarga de imagenes/media/fonts en modo live (ahorra ancho de
     # banda y tiempo; NO bloquea CSS/JS/XHR de los que depende el feed).
     block_resources: bool = True
