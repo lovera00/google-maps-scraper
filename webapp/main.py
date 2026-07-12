@@ -138,6 +138,12 @@ async def stats(
             lng, lat, radius_m,
         )
 
+        # "Actividades principales de la zona": replica el filtrado del reporte de
+        # la competencia -> radio FIJO de 2000 m (independiente del radius_km del
+        # mapa), solo clasificaciones confiables (category_confidence >= 0.5) y
+        # top 10 rubros. Nota: hoy el umbral 0.5 no descarta nada, porque la
+        # confianza minima de una fila clasificada es 0.50; se deja por fidelidad
+        # y para el caso de que se agreguen fuentes de menor confianza.
         by_type = await conn.fetch(
             """
             SELECT business_type AS type,
@@ -147,23 +153,28 @@ async def stats(
             WHERE is_active = TRUE
               AND geom IS NOT NULL
               AND business_type IS NOT NULL
+              AND category_confidence >= 0.5
               AND ST_DWithin(
                   geom,
                   ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
-                  $3
+                  2000
               )
             GROUP BY 1, 2
             ORDER BY count DESC
-            LIMIT 15
+            LIMIT 10
             """,
-            lng, lat, radius_m,
+            lng, lat,
         )
 
         biz_list = await conn.fetch(
             """
             SELECT name, lat, lng,
                    business_type AS type,
-                   COALESCE(business_category, 'Sin clasificar') AS category
+                   COALESCE(business_category, 'Sin clasificar') AS category,
+                   ST_Distance(
+                       geom,
+                       ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography
+                   ) AS distance
             FROM businesses
             WHERE is_active = TRUE
               AND geom IS NOT NULL
@@ -172,7 +183,7 @@ async def stats(
                   ST_SetSRID(ST_MakePoint($1, $2), 4326)::geography,
                   $3
               )
-            ORDER BY name
+            ORDER BY distance
             LIMIT 20000
             """,
             lng, lat, radius_m,
@@ -206,6 +217,7 @@ async def stats(
                 "lng": r["lng"],
                 "type": r["type"],
                 "category": r["category"],
+                "distance": round(r["distance"], 2),
             }
             for r in biz_list
         ],
