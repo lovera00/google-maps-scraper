@@ -35,6 +35,12 @@ class RateLimitConfig(BaseModel):
     max_consecutive_blocks: int = 5
     block_backoff_base_seconds: float = 300.0    # 5 min
     block_backoff_max_seconds: float = 3600.0    # 1 h
+    # Pausa antes de re-encolar una tarea que fallo por corte de red LOCAL
+    # (ERR_NETWORK_CHANGED, ERR_SOCKET_NOT_CONNECTED, etc.): sin esta espera,
+    # un micro-corte de Wi-Fi de varios segundos quema los max_task_retries
+    # con reintentos inmediatos contra una red todavia caida. Se escala por
+    # numero de retry (base*1, base*2, base*3).
+    network_blip_pause_seconds: float = 8.0
 
 
 class DedupConfig(BaseModel):

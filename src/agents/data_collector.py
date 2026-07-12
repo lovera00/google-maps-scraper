@@ -65,10 +65,25 @@ class DataCollector:
         "unusual traffic", "trafico inusual", "tráfico inusual",
         "not a robot", "no soy un robot", "recaptcha",
     )
+    # Errores de Chromium que indican corte de red LOCAL (Wi-Fi caido, cambio
+    # de interfaz, suspension), no bloqueo de Google. Matan en rafaga todas las
+    # navegaciones en vuelo; el orquestador espera un poco antes del retry.
+    _NETWORK_BLIP_KEYWORDS = (
+        "ERR_NETWORK_CHANGED",
+        "ERR_SOCKET_NOT_CONNECTED",
+        "ERR_ADDRESS_UNREACHABLE",
+        "ERR_NETWORK_IO_SUSPENDED",
+        "ERR_INTERNET_DISCONNECTED",
+        "ERR_NAME_NOT_RESOLVED",
+    )
 
     @classmethod
     def _is_browser_crash(cls, msg: str) -> bool:
         return any(kw in msg for kw in cls._BROWSER_CRASH_KEYWORDS)
+
+    @classmethod
+    def _is_network_blip(cls, msg: str) -> bool:
+        return any(kw in msg for kw in cls._NETWORK_BLIP_KEYWORDS)
 
     def __init__(self, config):
         self.config = config

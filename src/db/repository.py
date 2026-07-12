@@ -113,6 +113,21 @@ class Repository:
             )
             return True
 
+    async def _insert_batch_on_conn(self, db: aiosqlite.Connection,
+                                     businesses: List[NormalizedBusiness]) -> int:
+        """Inserta un batch sobre una conexion ya abierta. Hace commit al final."""
+        if not businesses:
+            return 0
+        inserted = 0
+        for b in businesses:
+            try:
+                if await self._upsert_on_conn(db, b):
+                    inserted += 1
+            except Exception as e:
+                logger.warning(f"Upsert fallido para '{getattr(b, 'name', '?')}': {e}")
+        await db.commit()
+        return inserted
+
     async def upsert_business(self, business: NormalizedBusiness) -> bool:
         """Upsert de un solo negocio en su propia transaccion (uso puntual)."""
         async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
@@ -123,31 +138,11 @@ class Repository:
             return is_new
 
     async def insert_batch(self, businesses: List[NormalizedBusiness]) -> int:
-        """Upsert de un batch entero en UNA sola conexion y UN solo commit.
-
-        Antes se abria una conexion nueva + commit por cada fila. Dentro de la
-        misma transaccion los tiers 1/2 (google_place_id/source_url) ven las
-        filas ya insertadas en este mismo batch (aun sin commitear), asi que los
-        duplicados intra-batch se resuelven como UPDATE y no violan los indices
-        unicos.
-        """
-        if not businesses:
-            return 0
-        inserted = 0
+        """Upsert de un batch entero en UNA sola conexion y UN solo commit."""
         async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
             db.row_factory = aiosqlite.Row
             await db.execute("PRAGMA journal_mode=WAL")
-            for b in businesses:
-                try:
-                    if await self._upsert_on_conn(db, b):
-                        inserted += 1
-                except Exception as e:
-                    # Una fila problematica no debe abortar el batch entero ni
-                    # tumbar Storage. Se saltea y se sigue (la celda se reintenta
-                    # en el proximo run via resume si hiciera falta).
-                    logger.warning(f"Upsert fallido para '{getattr(b, 'name', '?')}': {e}")
-            await db.commit()
-        return inserted
+            return await self._insert_batch_on_conn(db, businesses)
 
     async def exists_similar(self, name: str, lat: float, lng: float,
                              threshold_m: float = 50.0) -> bool:
@@ -181,63 +176,77 @@ class Repository:
 
     # ── scraping_tasks CRUD ──────────────────────────────────────
 
+    async def _upsert_task_pending_on_conn(self, db: aiosqlite.Connection,
+                                           grid_cell_json: str, category: str, depth: int) -> None:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute(
+            """INSERT OR IGNORE INTO scraping_tasks
+               (grid_cell_json, category, depth, status)
+               VALUES (?, ?, ?, 'pending')""",
+            (grid_cell_json, category, depth),
+        )
+        await db.commit()
+
+    async def _mark_task_in_progress_on_conn(self, db: aiosqlite.Connection,
+                                             grid_cell_json: str, category: str, depth: int) -> None:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute(
+            """INSERT INTO scraping_tasks (grid_cell_json, category, depth, status, started_at)
+               VALUES (?, ?, ?, 'in_progress', datetime('now'))
+               ON CONFLICT(grid_cell_json, category, depth)
+               DO UPDATE SET status='in_progress', started_at=datetime('now')""",
+            (grid_cell_json, category, depth),
+        )
+        await db.commit()
+
+    async def _mark_task_completed_on_conn(self, db: aiosqlite.Connection,
+                                           grid_cell_json: str, category: str, depth: int,
+                                           results_count: int) -> None:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute(
+            """INSERT INTO scraping_tasks
+               (grid_cell_json, category, depth, status, results_count, completed_at)
+               VALUES (?, ?, ?, 'completed', ?, datetime('now'))
+               ON CONFLICT(grid_cell_json, category, depth)
+               DO UPDATE SET status='completed', results_count=excluded.results_count,
+                             completed_at=datetime('now')""",
+            (grid_cell_json, category, depth, results_count),
+        )
+        await db.commit()
+
+    async def _mark_task_failed_on_conn(self, db: aiosqlite.Connection,
+                                        grid_cell_json: str, category: str, depth: int,
+                                        error_message: str) -> None:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute(
+            """INSERT INTO scraping_tasks
+               (grid_cell_json, category, depth, status, error_message, retry_count)
+               VALUES (?, ?, ?, 'failed', ?, 1)
+               ON CONFLICT(grid_cell_json, category, depth)
+               DO UPDATE SET status='failed',
+                             error_message=excluded.error_message,
+                             retry_count=retry_count + 1""",
+            (grid_cell_json, category, depth, error_message),
+        )
+        await db.commit()
+
     async def upsert_task_pending(self, grid_cell_json: str, category: str, depth: int) -> None:
-        """Registra una tarea como pendiente (idempotente, para overflow)."""
         async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
-            await db.execute("PRAGMA journal_mode=WAL")
-            await db.execute(
-                """INSERT OR IGNORE INTO scraping_tasks
-                   (grid_cell_json, category, depth, status)
-                   VALUES (?, ?, ?, 'pending')""",
-                (grid_cell_json, category, depth),
-            )
-            await db.commit()
+            await self._upsert_task_pending_on_conn(db, grid_cell_json, category, depth)
 
     async def mark_task_in_progress(self, grid_cell_json: str, category: str, depth: int) -> None:
-        """Marca una tarea como en progreso (al hacer dequeue)."""
         async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
-            await db.execute("PRAGMA journal_mode=WAL")
-            await db.execute(
-                """INSERT INTO scraping_tasks (grid_cell_json, category, depth, status, started_at)
-                   VALUES (?, ?, ?, 'in_progress', datetime('now'))
-                   ON CONFLICT(grid_cell_json, category, depth)
-                   DO UPDATE SET status='in_progress', started_at=datetime('now')""",
-                (grid_cell_json, category, depth),
-            )
-            await db.commit()
+            await self._mark_task_in_progress_on_conn(db, grid_cell_json, category, depth)
 
     async def mark_task_completed(self, grid_cell_json: str, category: str, depth: int,
                                   results_count: int) -> None:
-        """Marca una tarea como completada."""
         async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
-            await db.execute("PRAGMA journal_mode=WAL")
-            await db.execute(
-                """INSERT INTO scraping_tasks
-                   (grid_cell_json, category, depth, status, results_count, completed_at)
-                   VALUES (?, ?, ?, 'completed', ?, datetime('now'))
-                   ON CONFLICT(grid_cell_json, category, depth)
-                   DO UPDATE SET status='completed', results_count=excluded.results_count,
-                                 completed_at=datetime('now')""",
-                (grid_cell_json, category, depth, results_count),
-            )
-            await db.commit()
+            await self._mark_task_completed_on_conn(db, grid_cell_json, category, depth, results_count)
 
     async def mark_task_failed(self, grid_cell_json: str, category: str, depth: int,
                                error_message: str) -> None:
-        """Marca una tarea como fallida e incrementa retry_count."""
         async with aiosqlite.connect(self.db_path, timeout=30.0) as db:
-            await db.execute("PRAGMA journal_mode=WAL")
-            await db.execute(
-                """INSERT INTO scraping_tasks
-                   (grid_cell_json, category, depth, status, error_message, retry_count)
-                   VALUES (?, ?, ?, 'failed', ?, 1)
-                   ON CONFLICT(grid_cell_json, category, depth)
-                   DO UPDATE SET status='failed',
-                                 error_message=excluded.error_message,
-                                 retry_count=retry_count + 1""",
-                (grid_cell_json, category, depth, error_message),
-            )
-            await db.commit()
+            await self._mark_task_failed_on_conn(db, grid_cell_json, category, depth, error_message)
 
     async def get_completed_task_keys(self) -> set:
         """Devuelve el conjunto de (grid_cell_json, category, depth) completados."""

@@ -27,6 +27,7 @@ from .agents.data_collector import (
 from .agents.normalizer import Normalizer
 from .agents.deduplicator import Deduplicator
 from .agents.storage import Storage
+from .db.writer import DbWriter
 from .models.query_task import QueryTask
 from .models.grid import GridCell
 
@@ -77,9 +78,15 @@ class Orchestrator:
         self.deduplicator = Deduplicator(self.config)
         self.storage = Storage(self.config)
 
+        # Writer serializado a SQLite (elimina "database is locked" con 50 workers)
+        self.db_writer = DbWriter(self.storage.repo)
+
         # Reintentos por tarea ante fallo transitorio (timeout de navegacion)
         self.max_task_retries = getattr(
             self.config.rate_limit, "max_task_retries", 3)
+        # Pausa pre-retry ante corte de red local (ver RateLimitConfig)
+        self.network_blip_pause = getattr(
+            self.config.rate_limit, "network_blip_pause_seconds", 8.0)
 
         # Paralelismo del collector (E1): N workers concurrentes sobre task_queue.
         self.num_workers = max(1, getattr(self.config, "workers", 1))
@@ -179,6 +186,7 @@ class Orchestrator:
             self.storage.repo.db_path = db_path
 
         await self.storage.initialize()
+        await self.db_writer.start()
 
         # Ctrl+C / SIGTERM: corte inmediato (ver _handle_shutdown_signal)
         loop = asyncio.get_running_loop()
@@ -299,17 +307,13 @@ class Orchestrator:
                 break
 
         if remaining:
-            try:
-                inserted = await self.storage.repo.insert_batch(remaining)
-                self.stats.total_stored += inserted
-                logger.info(f"Drenados {len(remaining)} items pendientes de la cola final "
-                            f"({inserted} nuevos en SQLite)")
-            except Exception as e:
-                logger.error(f"Error insertando batch en drain: {e}", exc_info=True)
-                if self.telegram.enabled:
-                    await self.telegram.notify_fatal_error(
-                        f"DB lock en drain: {str(e)[:200]}"
-                    )
+            await self.db_writer.insert_batch(remaining)
+            self.stats.total_stored += len(remaining)
+            logger.info(f"Drenados {len(remaining)} items pendientes de la cola final "
+                        f"({len(remaining)} nuevos en SQLite)")
+
+        # Esperar a que la cola de escrituras se vacíe antes de seguir
+        await self.db_writer.flush()
 
         # Flush completo de SQLite a PostgreSQL (solo si hay DSN configurado)
         if self.storage._pg_dsn:
@@ -319,6 +323,7 @@ class Orchestrator:
             except Exception as e:
                 logger.error(f"Error en flush a PostgreSQL: {e}", exc_info=True)
 
+        await self.db_writer.stop()
         await self.storage.close()
 
         # Exportar JSON
@@ -358,7 +363,7 @@ class Orchestrator:
             task_key = (task.grid_cell.to_json(), task.category, task.depth)
 
             try:
-                await self.storage.repo.mark_task_in_progress(*task_key)
+                await self.db_writer.mark_task_in_progress(*task_key)
 
                 raw_businesses = await self.collector.scrape(task, worker_id)
                 result_count = len(raw_businesses)
@@ -367,7 +372,7 @@ class Orchestrator:
                     new_tasks = self.planner.handle_overflow(task)
                     for nt in new_tasks:
                         nt_key = (nt.grid_cell.to_json(), nt.category, nt.depth)
-                        await self.storage.repo.upsert_task_pending(*nt_key)
+                        await self.db_writer.upsert_task_pending(*nt_key)
                         await self.task_queue.put(nt)
                     self.stats.overflow_events += 1
                     logger.info(f"Overflow: {result_count} resultados en celda, "
@@ -379,7 +384,7 @@ class Orchestrator:
                     await self.raw_queue.put(rb)
                 self.stats.total_scraped += result_count
 
-                await self.storage.repo.mark_task_completed(*task_key, result_count)
+                await self.db_writer.mark_task_completed(*task_key, result_count)
 
                 if result_count > 0:
                     logger.debug(f"Scraped: {result_count} resultados de {task.category}")
@@ -402,7 +407,7 @@ class Orchestrator:
                 # Pausa global con backoff escalante en vez de abortar de una.
                 should_retry = await self.collector.handle_block()
                 if not should_retry:
-                    await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
+                    await self.db_writer.mark_task_failed(*task_key, str(e)[:500])
                     await self._async_abort(
                         f"Google Maps sigue bloqueando tras "
                         f"{self.collector.max_consecutive_blocks} pausas con backoff ({e})"
@@ -413,6 +418,16 @@ class Orchestrator:
             except ScrapeTransientError as e:
                 if task.retry_count < self.max_task_retries:
                     task.retry_count += 1
+                    if DataCollector._is_network_blip(str(e)):
+                        # Corte de red local: esperar antes de re-encolar para
+                        # no quemar los reintentos con la red todavia caida.
+                        pause = self.network_blip_pause * task.retry_count
+                        logger.warning(
+                            f"Corte de red local detectado; esperando "
+                            f"{pause:.0f}s antes de re-encolar (retry "
+                            f"{task.retry_count}/{self.max_task_retries}): {e}"
+                        )
+                        await asyncio.sleep(pause)
                     await self.task_queue.put(task)
                     logger.warning(
                         f"Fallo transitorio (retry {task.retry_count}/"
@@ -423,7 +438,7 @@ class Orchestrator:
                             task, task.retry_count, self.max_task_retries, str(e)
                         ))
                 else:
-                    await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
+                    await self.db_writer.mark_task_failed(*task_key, str(e)[:500])
                     logger.error(
                         f"Fallo transitorio tras {self.max_task_retries} reintentos, "
                         f"marcando failed: {task.category} @ "
@@ -435,7 +450,7 @@ class Orchestrator:
                         ))
             except Exception as e:
                 logger.error(f"Error en collector: {e}")
-                await self.storage.repo.mark_task_failed(*task_key, str(e)[:500])
+                await self.db_writer.mark_task_failed(*task_key, str(e)[:500])
                 if self.telegram.enabled:
                     asyncio.create_task(self.telegram.notify_task_failed(
                         task, str(e)[:200], 0, 0
@@ -509,28 +524,14 @@ class Orchestrator:
             item = await self.final_queue.get()
             if item is None:
                 if batch:
-                    try:
-                        inserted = await self.storage.insert_batch(batch)
-                        self.stats.total_stored += inserted
-                    except Exception as e:
-                        logger.error(f"Error insertando batch en storage: {e}", exc_info=True)
-                        if self.telegram.enabled:
-                            asyncio.create_task(self.telegram.notify_fatal_error(
-                                f"DB lock en storage: {str(e)[:200]}"
-                            ))
+                    await self.db_writer.insert_batch(batch)
+                    self.stats.total_stored += len(batch)
                 break
 
             batch.append(item)
             if len(batch) >= batch_size:
-                try:
-                    inserted = await self.storage.insert_batch(batch)
-                    self.stats.total_stored += inserted
-                except Exception as e:
-                    logger.error(f"Error insertando batch en storage: {e}", exc_info=True)
-                    if self.telegram.enabled:
-                        asyncio.create_task(self.telegram.notify_fatal_error(
-                            f"DB lock en storage: {str(e)[:200]}"
-                        ))
+                await self.db_writer.insert_batch(batch)
+                self.stats.total_stored += len(batch)
                 batch = []
 
             self.final_queue.task_done()
