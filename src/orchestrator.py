@@ -258,7 +258,12 @@ class Orchestrator:
         except Exception as e:
             logger.error(f"Error fatal en el pipeline: {e}", exc_info=True)
             if self.telegram.enabled:
-                asyncio.create_task(self.telegram.notify_fatal_error(str(e)[:300]))
+                try:
+                    await asyncio.wait_for(
+                        self.telegram.notify_fatal_error(str(e)[:300]), timeout=8.0
+                    )
+                except Exception:
+                    pass
         finally:
             await self.collector.teardown()
             await self._drain_and_flush()
@@ -294,10 +299,17 @@ class Orchestrator:
                 break
 
         if remaining:
-            inserted = await self.storage.repo.insert_batch(remaining)
-            self.stats.total_stored += inserted
-            logger.info(f"Drenados {len(remaining)} items pendientes de la cola final "
-                        f"({inserted} nuevos en SQLite)")
+            try:
+                inserted = await self.storage.repo.insert_batch(remaining)
+                self.stats.total_stored += inserted
+                logger.info(f"Drenados {len(remaining)} items pendientes de la cola final "
+                            f"({inserted} nuevos en SQLite)")
+            except Exception as e:
+                logger.error(f"Error insertando batch en drain: {e}", exc_info=True)
+                if self.telegram.enabled:
+                    await self.telegram.notify_fatal_error(
+                        f"DB lock en drain: {str(e)[:200]}"
+                    )
 
         # Flush completo de SQLite a PostgreSQL (solo si hay DSN configurado)
         if self.storage._pg_dsn:
@@ -311,8 +323,11 @@ class Orchestrator:
 
         # Exportar JSON
         json_path = "data/output.json"
-        count = await self.storage.export_json(json_path)
-        logger.info(f"Datos exportados a {json_path}: {count} registros")
+        try:
+            count = await self.storage.export_json(json_path)
+            logger.info(f"Datos exportados a {json_path}: {count} registros")
+        except Exception as e:
+            logger.error(f"Error exportando JSON: {e}", exc_info=True)
 
     async def _run_all_collectors(self):
         """Lanza N workers de scraping y emite UN solo sentinela al terminar todos."""
@@ -494,14 +509,28 @@ class Orchestrator:
             item = await self.final_queue.get()
             if item is None:
                 if batch:
-                    inserted = await self.storage.insert_batch(batch)
-                    self.stats.total_stored += inserted
+                    try:
+                        inserted = await self.storage.insert_batch(batch)
+                        self.stats.total_stored += inserted
+                    except Exception as e:
+                        logger.error(f"Error insertando batch en storage: {e}", exc_info=True)
+                        if self.telegram.enabled:
+                            asyncio.create_task(self.telegram.notify_fatal_error(
+                                f"DB lock en storage: {str(e)[:200]}"
+                            ))
                 break
 
             batch.append(item)
             if len(batch) >= batch_size:
-                inserted = await self.storage.insert_batch(batch)
-                self.stats.total_stored += inserted
+                try:
+                    inserted = await self.storage.insert_batch(batch)
+                    self.stats.total_stored += inserted
+                except Exception as e:
+                    logger.error(f"Error insertando batch en storage: {e}", exc_info=True)
+                    if self.telegram.enabled:
+                        asyncio.create_task(self.telegram.notify_fatal_error(
+                            f"DB lock en storage: {str(e)[:200]}"
+                        ))
                 batch = []
 
             self.final_queue.task_done()
