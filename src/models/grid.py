@@ -56,8 +56,14 @@ class GridCell:
             return 15
         elif area > 1:
             return 16
-        else:
+        elif area > 0.25:
             return 17
+        elif area > 0.06:
+            return 18
+        elif area > 0.015:
+            return 19
+        else:
+            return 20
 
     def __hash__(self):
         return hash((self.lat_min, self.lat_max, self.lng_min, self.lng_max))
