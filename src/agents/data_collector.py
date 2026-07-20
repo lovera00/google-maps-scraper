@@ -13,6 +13,7 @@ from typing import List, Optional
 from bs4 import BeautifulSoup
 
 from ..models.query_task import QueryTask
+from ..proxy.manager import ProxyManager
 from ..utils.fingerprints import random_fingerprint
 from ..utils.rate_limiter import RateLimiter
 from ..utils.selectors import SELECTORS
@@ -116,6 +117,9 @@ class DataCollector:
             for _ in range(self.num_workers)
         ]
         self.rate_limiter = self.rate_limiters[0]  # alias compat
+        # E3: rotacion de proxies por-contexto. Deshabilitado => acquire() da None
+        # y cada new_context sale por IP directa (comportamiento previo intacto).
+        self.proxy_manager = ProxyManager(config)
         self.browser = None
         self.context = None
         self.page = None
@@ -403,12 +407,15 @@ class DataCollector:
             self._in_flight += 1
         fp = random_fingerprint()
         context = None
+        # E3: un proxy por contexto (round-robin con cooldown). None => IP directa.
+        proxy_entry = self.proxy_manager.acquire()
         try:
             context = await browser.new_context(
                 viewport=fp["viewport"],
                 user_agent=fp["user_agent"],
                 locale="es-PY",
                 timezone_id="America/Asuncion",
+                proxy=proxy_entry.pw if proxy_entry else None,
             )
             page = await context.new_page()
 
@@ -458,14 +465,26 @@ class DataCollector:
             # paginas densas) y bloquearia el event loop, serializando a los N
             # workers. run_in_executor libera el loop para los otros scrapes.
             loop = asyncio.get_running_loop()
-            return await loop.run_in_executor(None, self._parse_html, html)
-        except (GoogleMapsBlockedError, ScrapeTransientError):
+            result = await loop.run_in_executor(None, self._parse_html, html)
+            # Este proxy respondio sin bloqueo/error: resetea su contador de fallos.
+            self.proxy_manager.report_success(proxy_entry)
+            return result
+        except (GoogleMapsBlockedError, ScrapeTransientError) as e:
+            # Bloqueo o fallo de red: con proxy, casi siempre es culpa del proxy
+            # (su IP fue bloqueada o cayo). Lo penalizamos para que rote/enfrie.
+            # Marcamos el ORIGEN: el orquestador NO dispara pausa global, ni
+            # aborta, ni avisa por Telegram ante bloqueos de PROXY; solo lo hace
+            # ante bloqueo con IP directa (esa si es "nuestra" IP).
+            e.via_proxy = proxy_entry is not None
+            self.proxy_manager.report_failure(proxy_entry)
             raise
         except Exception as e:
             # Errores de crash de navegador: re-lanzar para que scrape() reconecte
             if self._is_browser_crash(str(e)):
+                self.proxy_manager.report_failure(proxy_entry)
                 raise
             logger.error(f"Error en scrape live: {e}")
+            self.proxy_manager.report_failure(proxy_entry)
             return []
         finally:
             self._in_flight -= 1

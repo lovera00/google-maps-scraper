@@ -378,7 +378,7 @@ class Orchestrator:
                     logger.info(f"Overflow: {result_count} resultados en celda, "
                                 f"{len(new_tasks)} sub-tareas creadas (depth={task.depth})")
                     if not new_tasks and self.telegram.enabled:
-                        asyncio.create_task(self.telegram.notify_overflow_max_depth(task))
+                        pass#asyncio.create_task(self.telegram.notify_overflow_max_depth(task))
 
                 for rb in raw_businesses:
                     await self.raw_queue.put(rb)
@@ -390,32 +390,50 @@ class Orchestrator:
                     logger.debug(f"Scraped: {result_count} resultados de {task.category}")
 
             except GoogleMapsBlockedError as e:
-                logger.error(f"Google Maps bloqueado: {e}")
-                # Notificar bloqueo antes de la pausa
-                if self.telegram.enabled:
-                    delay = min(
-                        self.config.rate_limit.block_backoff_base_seconds *
-                        (2 ** (self.collector._consecutive_blocks)),
-                        self.config.rate_limit.block_backoff_max_seconds
+                if getattr(e, "via_proxy", False):
+                    # Bloqueo a traves de un PROXY: NO es nuestra IP. El proxy ya
+                    # quedo penalizado/enfriado en el collector. Solo re-encolamos
+                    # la tarea para que otro worker la tome con el siguiente proxy
+                    # disponible (y, si ya no queda ninguno sano, saldra por IP
+                    # directa). Sin pausa global, sin contar para abort, sin
+                    # Telegram (con proxies free seria un diluvio de avisos).
+                    logger.warning(
+                        f"Proxy bloqueado en '{task.category}'; reintentando con "
+                        f"otro proxy ({self.collector.proxy_manager.stats()})"
                     )
-                    asyncio.create_task(self.telegram.notify_block(
-                        consecutive=self.collector._consecutive_blocks + 1,
-                        max_consecutive=self.collector.max_consecutive_blocks,
-                        delay_seconds=delay,
-                        task=task,
-                    ))
-                # Pausa global con backoff escalante en vez de abortar de una.
-                should_retry = await self.collector.handle_block()
-                if not should_retry:
-                    await self.db_writer.mark_task_failed(*task_key, str(e)[:500])
-                    await self._async_abort(
-                        f"Google Maps sigue bloqueando tras "
-                        f"{self.collector.max_consecutive_blocks} pausas con backoff ({e})"
-                    )
-                # Re-encolar la MISMA tarea para reintentarla tras la pausa.
-                await self.task_queue.put(task)
-                logger.info("Reintentando la tarea tras la pausa por bloqueo")
+                    await self.task_queue.put(task)
+                else:
+                    # Bloqueo SIN proxy (IP directa: ya no quedaban proxies sanos).
+                    # Ahora si es "nuestra" IP -> pausa global escalante, aviso por
+                    # Telegram, y abort si el bloqueo persiste tras
+                    # max_consecutive_blocks pausas.
+                    logger.error(f"Google Maps bloqueado con IP DIRECTA: {e}")
+                    if self.telegram.enabled:
+                        delay = min(
+                            self.config.rate_limit.block_backoff_base_seconds *
+                            (2 ** (self.collector._consecutive_blocks)),
+                            self.config.rate_limit.block_backoff_max_seconds
+                        )
+                        asyncio.create_task(self.telegram.notify_block(
+                            consecutive=self.collector._consecutive_blocks + 1,
+                            max_consecutive=self.collector.max_consecutive_blocks,
+                            delay_seconds=delay,
+                            task=task,
+                        ))
+                    should_retry = await self.collector.handle_block()
+                    if not should_retry:
+                        await self.db_writer.mark_task_failed(*task_key, str(e)[:500])
+                        await self._async_abort(
+                            f"Google Maps sigue bloqueando con IP DIRECTA tras "
+                            f"{self.collector.max_consecutive_blocks} pausas con backoff ({e})"
+                        )
+                    # Re-encolar la MISMA tarea para reintentarla tras la pausa.
+                    await self.task_queue.put(task)
+                    logger.info("Reintentando la tarea tras la pausa por bloqueo (IP directa)")
             except ScrapeTransientError as e:
+                # Telegram solo para fallos SIN proxy: un timeout via proxy free
+                # es rutina (el proxy murio) y avisar por cada uno seria un diluvio.
+                notify = self.telegram.enabled and not getattr(e, "via_proxy", False)
                 if task.retry_count < self.max_task_retries:
                     task.retry_count += 1
                     if DataCollector._is_network_blip(str(e)):
@@ -433,7 +451,7 @@ class Orchestrator:
                         f"Fallo transitorio (retry {task.retry_count}/"
                         f"{self.max_task_retries}), re-encolando: {e}"
                     )
-                    if self.telegram.enabled:
+                    if notify:
                         asyncio.create_task(self.telegram.notify_transient_retry(
                             task, task.retry_count, self.max_task_retries, str(e)
                         ))
@@ -444,7 +462,7 @@ class Orchestrator:
                         f"marcando failed: {task.category} @ "
                         f"{task.center_lat:.4f},{task.center_lng:.4f}"
                     )
-                    if self.telegram.enabled:
+                    if notify:
                         asyncio.create_task(self.telegram.notify_task_failed(
                             task, str(e), task.retry_count, self.max_task_retries
                         ))
